@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "granite-switch-systemone"
+version = "0.1.0"
+description = "A jev system-one API (/v1/systemone) bridge for granite-switch's vLLM backend, mounted alongside /v1/chat/completions on the same server."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+# fastapi/pydantic/starlette are already runtime dependencies of vllm (which the
+# container this ships in always has installed) -- not re-declared here on purpose,
+# to use whatever versions the vLLM image already pins rather than risking a resolver
+# conflict against them.
+dependencies = []
+
+[project.optional-dependencies]
+# fastapi/pydantic are vllm's own runtime dependencies; declared here only for
+# running this package's own tests/lint outside a vLLM container (e.g. in CI).
+dev = ["fastapi", "pydantic", "pytest", "ruff"]
+
+[project.entry-points."vllm.endpoint_plugins"]
+granite_switch_systemone = "granite_switch_systemone.plugin:register"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 119
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["granite_switch_systemone"]

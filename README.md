@@ -1,0 +1,137 @@
+# granite-switch-systemone
+
+A [jev system-one API](https://docs.typesafe.ai/api) (`POST /v1/systemone`) bridge for
+[granite-switch](https://github.com/generative-computing/granite-switch)'s vLLM backend,
+mounted on the **same** server that already serves `/v1/chat/completions` — one engine, one
+GPU KV cache, one container.
+
+jev's system-one API takes an unstructured `state` plus typed `questions`
+(`noul`/`choice`/`score`) and returns typed `answers` with calibrated probabilities. A
+granite-switch decision adapter can already do exactly this through
+`/v1/chat/completions` — a caller just has to hand-build the request themselves (the
+adapter's trained invocation marker, a single-token label pool, a softmax over
+`top_logprobs`). This package does that translation server-side, as a
+[`vllm.endpoint_plugins`](https://github.com/vllm-project/vllm) entry point, so a
+jev-shaped caller gets a jev-shaped answer without needing to know any of that.
+
+## Why this is its own repo, not part of granite-switch or mellea
+
+- **granite-switch** should not carry adapter-specific inference logic — every other
+  granite adapter function's prompt-building and output-reading lives in
+  [**mellea**](https://github.com/generative-computing/mellea)'s own inference path
+  (`mellea/backends/adapters/`, `mellea/formatters/granite/intrinsics/`), not in
+  granite-switch itself, and `granite-switch` and `mellea` must not depend on each other
+  in a way that creates a cycle.
+- **mellea** does not yet have an equivalent primitive for a single-token
+  label-logit-softmax decision (every one of its existing `IOContract` shapes parses
+  structured JSON text from the model, not a softmax over per-label logprobs) — see
+  `src/granite_switch_systemone/renderer.py`'s docstring for exactly what's missing and
+  where it belongs once it exists.
+
+So this package depends on `granite-switch` (never the reverse), carries today's one
+placeholder implementation of the decision-adapter rendering/readout logic clearly marked
+as such, and is built so that implementation can be swapped out for a real call into
+mellea's own machinery later with no code change to the generic bridge itself (see
+"Architecture" below).
+
+## Architecture
+
+- **`plugin.py`** — the generic jev-shaped request/response bridge: body validation
+  matching jev's own `HTTPValidationError` schema, context-length guarding, the
+  >128-option `choice` chunking jev's ceiling needs that vLLM's own
+  `logprob_token_ids` cap doesn't support in one call, jev's own `confidence` formulas,
+  and the actual engine call (`openai_serving_chat.create_chat_completion`, the exact
+  method `/v1/chat/completions`'s own route uses — no new engine access path).
+  **Has no knowledge of any specific adapter's trained prompt convention.**
+- **`renderer.py`** — the one adapter-specific piece: turns `(state, instructions,
+  option descriptions)` into chat messages and single-token label ids, for the specific
+  two-user-turn, aLoRA-marker-activated convention a granite-switch decision adapter is
+  trained with. Resolved dynamically by `plugin.py` via `SYSTEMONE_RENDERER` (a
+  `"module:function"` dotted path, defaulting to this module) — `plugin.py` never
+  imports it directly, so swapping in a different renderer (a different adapter's
+  convention, or eventually mellea's own equivalent primitive) needs no change to
+  `plugin.py`.
+
+## Why there's no system prompt in the rendered request
+
+Dropping the system prompt makes the state turn's tokens byte-identical to what a
+`/v1/chat/completions` conversation about the same state renders for its own first user
+turn (that call keeps its own system prompt, if any, in a *different*, later turn).
+Token-identical prefixes are automatically shared by vLLM's prefix cache — a chat
+conversation and a `/v1/systemone` decision about the same state reuse each other's
+cached prefix, because underneath both are just requests to the same engine.
+
+## Configuration
+
+| Env var | Required? | What it does |
+|---|---|---|
+| `SYSTEMONE_ADAPTER_NAME` | Only if the checkpoint has more than one adapter | Which `adapter_name` activates the decision adapter. Auto-resolved if the checkpoint has exactly one adapter; cross-checked against the checkpoint's real `GraniteSwitchConfig.adapter_names` either way, raising at server startup (not silently) on a mismatch. |
+| `SYSTEMONE_INVOCATION_MARKER` | **Always**, for the default renderer | The literal text that activates the decision aLoRA in its invocation turn (e.g. `"### DECISION"`). No safe default: granite-switch's chat template silently falls back to a *different* activation placement when the marker text isn't found, rather than raising — see `renderer.py`'s docstring. |
+| `SYSTEMONE_RENDERER` | No (defaults to this package's own renderer) | A `"module:function"` dotted path to a different rendering implementation, for a differently-trained adapter or a future mellea-backed one. |
+| `VLLM_PLUGINS` | Yes (set in the Dockerfile) | Must include both `register_granite_switch` and `granite_switch_systemone` — see the Dockerfile's own comment for why. |
+
+## Usage
+
+```bash
+docker build --platform linux/amd64 -t granite-switch-systemone:latest .
+
+docker run -d --gpus all \
+    -v /path/to/composed/checkpoint:/repository:ro \
+    -p 8000:8000 \
+    -e SYSTEMONE_INVOCATION_MARKER="### DECISION" \
+    granite-switch-systemone:latest
+```
+
+```python
+import json, urllib.request
+
+body = {
+    "model": "granite-switch",
+    "state": "My payouts have failed three times. The bank says everything is fine.",
+    "questions": {
+        "queue": {
+            "type": "choice",
+            "instructions": "Which team should handle this ticket?",
+            "criteria": {"payments": "Payout failures", "account": "Login issues", "other": "..."},
+        },
+        "escalate": {"type": "noul", "instructions": "Does this need urgent attention?"},
+    },
+}
+req = urllib.request.Request(
+    "http://localhost:8000/v1/systemone",
+    data=json.dumps(body).encode(),
+    headers={"Content-Type": "application/json"},
+)
+resp = json.loads(urllib.request.urlopen(req).read())
+# resp["answers"]["queue"]    -> {"type": "choice", "choice": "payments", "probabilities": {...}, "confidence": 0.97}
+# resp["answers"]["escalate"] -> {"type": "noul", "noul": 0.89}
+```
+
+## Deliberate scope limits (not a proxy to typesafe.ai)
+
+- `model` is required on the request (schema compliance) but never validated — the
+  response always echoes the actually-served model name.
+- Context limits (64k tokens/request, 32k/question by default, 262k under
+  `TypeSafe-Danger-Zone-Long-Context: true`) are additionally capped by this server's
+  own `--max-model-len`, since a running engine can't be resized per request.
+- A `choice` with more than 128 options (vLLM's own `SamplingParams.logprob_token_ids`
+  limit per request, below jev's published 255-option ceiling) is handled by chunking
+  across more than one `create_chat_completion` call for the identical prompt, rather
+  than rejected.
+- `401`/`429`/`529` are not implemented — access control and rate limiting belong to
+  whatever is hosting this container.
+- jev's fourth question type (`"box"`, bounding-box-on-an-image) is not supported — no
+  vision capability on a text decision adapter.
+
+## Known upstream limitation
+
+`generative-computing/granite-switch`'s composer discards each adapter's original
+`adapter_config.json` (which, for an aLoRA adapter, carries `alora_invocation_tokens` —
+PEFT's own source of truth for the invocation marker `SYSTEMONE_INVOCATION_MARKER` has
+to be told explicitly here) once compose finishes. See
+[generative-computing/granite-switch#TODO](https://github.com/generative-computing/granite-switch/issues)
+for the follow-up filed to retain it.
+
+## License
+
+Apache-2.0.
