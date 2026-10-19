@@ -408,7 +408,7 @@ def post_counted(client: Client, path: str, body: dict) -> tuple[dict, float | N
     return response, None
 
 
-def check_prefix_cache(client: Client, model: str) -> Check:
+def check_prefix_cache(client: Client, model: str, system_prompt: bool) -> Check:
     """Primary measure: the decision's own usage.input_tokens_details.cached_tokens,
     which vLLM reports per request with --enable-prompt-tokens-details. Cross-check:
     the /metrics hit counter for the same request, when exposed."""
@@ -437,6 +437,7 @@ def check_prefix_cache(client: Client, model: str) -> Check:
         return usage.get("input_tokens_details", {}).get("cached_tokens", 0), usage.get("input_tokens", 0)
 
     hits_seen: list[int] = []
+    system_prompt_tokens = 64 if system_prompt else 0
 
     def probe(label: str, setup: tuple[str, dict], text: str, expect_hits: bool) -> None:
         post_counted(client, *setup)
@@ -457,7 +458,8 @@ def check_prefix_cache(client: Client, model: str) -> Check:
             # The state turn is most of the decision prompt; the decision turn is the rest.
             check.expect(cached >= prompt / 2, f"{label}: expected at least half the prompt from cache")
         else:
-            check.expect(cached == 0, f"{label}: expected no full block in common")
+            # With the experimental system prompt, its own blocks come from earlier decisions.
+            check.expect(cached <= system_prompt_tokens, f"{label}: expected nothing beyond the system prompt")
 
     text = state()
     probe(
@@ -467,12 +469,18 @@ def check_prefix_cache(client: Client, model: str) -> Check:
         True,
     )
     text = state()
+    if system_prompt:
+        # The system prompt comes first, so a chat cannot share the decision's state turn.
+        check.notes.append("server sends the experimental system prompt: chat sharing not expected")
     shared_layout = [
         {"role": "user", "content": "State:\n" + text},
         {"role": "user", "content": "Summarise this ticket in one sentence."},
     ]
     probe(
-        "after a chat whose first turn is `State:` + state", ("/v1/chat/completions", chat(shared_layout)), text, True
+        "after a chat whose first turn is `State:` + state",
+        ("/v1/chat/completions", chat(shared_layout)),
+        text,
+        not system_prompt,
     )
     text = state()
     raw = [{"role": "user", "content": text}]
@@ -500,6 +508,11 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=120.0, help="per-request timeout seconds")
     parser.add_argument("--skip-chat", action="store_true", help="skip the chat-completions check")
     parser.add_argument("--skip-prefix-cache", action="store_true", help="skip the prefix-cache check")
+    parser.add_argument(
+        "--system-prompt",
+        action="store_true",
+        help="the server runs with SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1 (changes the cache expectations)",
+    )
     args = parser.parse_args()
 
     client = Client(args.base_url, args.timeout)
@@ -526,7 +539,7 @@ def main() -> int:
     if not args.skip_chat:
         checks.append(check_chat(client, model))
         if not args.skip_prefix_cache:
-            checks.append(check_prefix_cache(client, model))
+            checks.append(check_prefix_cache(client, model, args.system_prompt))
 
     failed = 0
     for check in checks:
