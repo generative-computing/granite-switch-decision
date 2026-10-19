@@ -18,6 +18,13 @@ import os
 PLAIN_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 _INVOCATION_MARKER_ENV = "SYSTEMONE_INVOCATION_MARKER"
+_SYSTEM_PROMPT_ENV = "SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT"
+# The trained system prompt, used for the model card's published score. Off by default so
+# a decision's state turn can share the prefix cache with chat; experimental.
+SYSTEM_PROMPT = (
+    "You are a decision engine. Read the state, then answer the question by replying with "
+    "exactly one option label from the list. Do not explain."
+)
 
 
 def _invocation_marker() -> str:
@@ -28,6 +35,18 @@ def _invocation_marker() -> str:
             'was trained to activate on (e.g. "### DECISION").'
         )
     return marker
+
+
+def _system_prompt_enabled() -> bool:
+    value = os.environ.get(_SYSTEM_PROMPT_ENV, "0")
+    if value not in ("0", "1"):
+        raise RuntimeError(f"{_SYSTEM_PROMPT_ENV}={value!r} must be 0 or 1")
+    return value == "1"
+
+
+def check_settings() -> None:
+    """Raise on bad renderer settings; the plugin calls this at startup."""
+    _system_prompt_enabled()
 
 
 def text_of(x: object) -> str:
@@ -97,4 +116,6 @@ def render(
         {"role": "user", "content": "State:\n" + escape_special_tokens(ctx, specials)},
         {"role": "user", "content": second_turn},
     ]
+    if _system_prompt_enabled():
+        messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
     return messages, [token_id for _, token_id in labels]

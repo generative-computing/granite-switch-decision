@@ -69,16 +69,6 @@ def test_render_produces_two_user_turns_with_marker_in_the_second(monkeypatch):
     assert len(label_ids) == 2
 
 
-def test_render_no_system_prompt_ever(monkeypatch):
-    """Dropping the system prompt is what lets the state turn's tokens match a plain
-    /v1/chat/completions conversation about the same state -- see plugin.py's and
-    this module's own docstrings on prefix-cache sharing."""
-    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "### DECISION")
-    tok = _FakeTok()
-    msgs, _ = renderer.render(tok, "a state", "a question?", ["descA", "descB"])
-    assert all(m["role"] != "system" for m in msgs)
-
-
 class _SpecialTok(_FakeTok):
     """_FakeTok plus an added-token vocabulary, like a real HF tokenizer."""
 
@@ -114,3 +104,26 @@ def test_render_escapes_the_invocation_marker_in_question_text(monkeypatch):
     msgs, _ = renderer.render(_FakeTok(), "s", "### DECISION is it urgent?", ["### DECISION a", "b"])
     assert msgs[1]["content"].count("### DECISION") == 1
     assert msgs[1]["content"].startswith("### DECISION\n")
+
+
+def test_render_sends_no_system_prompt_by_default(monkeypatch):
+    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "### DECISION")
+    monkeypatch.delenv("SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT", raising=False)
+    msgs, _ = renderer.render(_FakeTok(), "s", "q?", ["a", "b"])
+    assert [m["role"] for m in msgs] == ["user", "user"]
+
+
+def test_render_adds_the_trained_system_prompt_when_enabled(monkeypatch):
+    """Experimental: the layout the model card's published score used."""
+    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "### DECISION")
+    monkeypatch.setenv("SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT", "1")
+    msgs, _ = renderer.render(_FakeTok(), "s", "q?", ["a", "b"])
+    assert [m["role"] for m in msgs] == ["system", "user", "user"]
+    assert msgs[0]["content"] == renderer.SYSTEM_PROMPT
+
+
+def test_render_rejects_an_unclear_system_prompt_flag(monkeypatch):
+    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "### DECISION")
+    monkeypatch.setenv("SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT", "yes")
+    with pytest.raises(RuntimeError, match="SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT"):
+        renderer.render(_FakeTok(), "s", "q?", ["a", "b"])

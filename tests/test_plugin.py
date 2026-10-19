@@ -631,3 +631,16 @@ def test_concurrency_limit_zero_means_unlimited():
                 return a and b
 
     assert asyncio.run(run())
+
+
+def test_init_state_fails_startup_on_a_bad_system_prompt_flag(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    monkeypatch.setenv("SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT", "yes")
+    chat = _FakeChat(["decision"])
+    chat.renderer = NS(tokenizer=None)
+    chat.model_config.max_model_len = 8192
+    state = NS(openai_serving_chat=chat)
+    args = NS(served_model_name=["m"], model="m")
+    with pytest.raises(RuntimeError, match="SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT"):
+        asyncio.run(sp.SystemOnePlugin().init_state(None, state, args))

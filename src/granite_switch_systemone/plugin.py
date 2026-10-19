@@ -957,6 +957,14 @@ class SystemOnePlugin:
         state.systemone_adapter_name = _resolve_adapter_name(chat)
         state.systemone_renderer = _load_renderer()
         state.systemone_limiter = _Limiter(_max_concurrent())
+        _check_renderer_settings(state.systemone_renderer)
+
+
+def _check_renderer_settings(renderer) -> None:
+    """Fail startup on a bad renderer setting rather than on the first request."""
+    check = getattr(importlib.import_module(renderer.__module__), "check_settings", None)
+    if check:
+        check()
 
 
 def register() -> SystemOnePlugin:
