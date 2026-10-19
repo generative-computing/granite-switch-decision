@@ -322,6 +322,7 @@ def client(monkeypatch):
     app.state.systemone_served_model = "granite-switch"
     app.state.systemone_adapter_name = "decision"
     app.state.systemone_renderer = lambda *args: ([], [])
+    app.state.systemone_limiter = sp._Limiter(0)
     return TestClient(app)
 
 
@@ -453,3 +454,13 @@ def test_engine_error_on_systemone_route_uses_its_error_shape(client, monkeypatc
     resp = client.post("/v1/systemone", json={"model": "m", "state": "x", "questions": {"q": {"type": "noul"}}})
     assert resp.status_code == 503
     assert resp.json() == {"error": {"message": "engine overloaded", "code": 503}}
+
+
+def test_full_limiter_returns_503_on_both_routes(client):
+    client.app.state.systemone_limiter = sp._Limiter(1)
+    client.app.state.systemone_limiter.in_flight = 1
+    body = {"model": "m", "input": "x", "questions": [{"type": "predicate", "instructions": "q?"}]}
+    resp = client.post("/v1/decisions", json=body)
+    assert resp.status_code == 503 and resp.json()["error"]["type"] == "invalid_request_error"
+    resp = client.post("/v1/systemone", json={"model": "m", "state": "x", "questions": {"q": {"type": "noul"}}})
+    assert resp.status_code == 503 and resp.json()["error"]["code"] == 503

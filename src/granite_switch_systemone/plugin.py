@@ -11,6 +11,7 @@ prompt is built by the renderer named in `SYSTEMONE_RENDERER`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import json
 import math
@@ -44,6 +45,9 @@ DEFAULT_PER_REQUEST_TOKEN_LIMIT = 64_000
 DANGER_ZONE_TOKEN_LIMIT = 262_144
 DANGER_ZONE_HEADER = "typesafe-danger-zone-long-context"
 # vLLM's MAX_LOGPROB_TOKEN_IDS; a choice with more labels is read in chunks of this size.
+# Questions per request on /v1/systemone, matching OpenAI's 200 on /v1/decisions.
+MAX_QUESTIONS = 200
+_MAX_CONCURRENT_ENV = "SYSTEMONE_MAX_CONCURRENT_REQUESTS"
 MAX_LABEL_OPTIONS = 128
 
 
@@ -132,11 +136,10 @@ class SystemOneRequest(BaseModel):
     questions: dict[str, Question]
 
     @model_validator(mode="after")
-    def _nonempty(self) -> SystemOneRequest:
-        # jev: SystemOneRequest.questions has minProperties=1 (confirmed against the
-        # real OpenAPI spec; the prose docs never state this, but the schema does).
-        if not self.questions:
-            raise ValueError("`questions` must have at least one entry")
+    def _question_count(self) -> SystemOneRequest:
+        # jev requires at least one question and sets no maximum; each is an engine request.
+        if not 1 <= len(self.questions) <= MAX_QUESTIONS:
+            raise ValueError(f"`questions` must have 1-{MAX_QUESTIONS} entries")
         return self
 
 
@@ -615,6 +618,35 @@ async def _answer_question(
     return name, answer, usage
 
 
+class _Limiter:
+    """Caps decision requests in flight; 0 means no cap. Full means reject, not queue."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.in_flight = 0
+
+    @contextlib.asynccontextmanager
+    async def slot(self):
+        if self.limit and self.in_flight >= self.limit:
+            yield False
+            return
+        self.in_flight += 1
+        try:
+            yield True
+        finally:
+            self.in_flight -= 1
+
+
+_BUSY = "too many decision requests in flight; retry later"
+
+
+def _max_concurrent() -> int:
+    value = os.environ.get(_MAX_CONCURRENT_ENV, "0")
+    if not value.isdigit():
+        raise RuntimeError(f"{_MAX_CONCURRENT_ENV}={value!r} must be a non-negative integer")
+    return int(value)
+
+
 async def _run_until_disconnect(request: Request, work):
     """Await `work`, cancelling it if the client disconnects first (returns None then).
     Same pattern as vLLM's `with_cancellation`, started after the body has been read."""
@@ -782,10 +814,15 @@ async def _handle_systemone(raw_request: Request) -> Response:
     except ValueError as e:
         return _error(HTTPStatus.BAD_REQUEST, str(e))
 
-    try:
-        results = await _run_until_disconnect(raw_request, _answer_all(state, req.state, list(req.questions.items())))
-    except EngineError as e:
-        return _error(HTTPStatus(e.status), str(e))
+    async with state.systemone_limiter.slot() as admitted:
+        if not admitted:
+            return _error(HTTPStatus.SERVICE_UNAVAILABLE, _BUSY)
+        try:
+            results = await _run_until_disconnect(
+                raw_request, _answer_all(state, req.state, list(req.questions.items()))
+            )
+        except EngineError as e:
+            return _error(HTTPStatus(e.status), str(e))
     if results is None:
         return Response(status_code=499)
 
@@ -849,10 +886,14 @@ async def _handle_decisions(raw_request: Request) -> Response:
         return _openai_error(HTTPStatus.BAD_REQUEST, str(e))
 
     work = _answer_all(state, state_text, [(key, internal) for key, internal, _ in translated])
-    try:
-        results = await _run_until_disconnect(raw_request, work)
-    except EngineError as e:
-        return _openai_error(HTTPStatus(e.status), str(e))
+    async with state.systemone_limiter.slot() as admitted:
+        if not admitted:
+            work.close()
+            return _openai_error(HTTPStatus.SERVICE_UNAVAILABLE, _BUSY)
+        try:
+            results = await _run_until_disconnect(raw_request, work)
+        except EngineError as e:
+            return _openai_error(HTTPStatus(e.status), str(e))
     if results is None:
         return Response(status_code=499)
 
@@ -915,6 +956,7 @@ class SystemOnePlugin:
         # A bad adapter name or renderer must stop the server, not serve wrong answers.
         state.systemone_adapter_name = _resolve_adapter_name(chat)
         state.systemone_renderer = _load_renderer()
+        state.systemone_limiter = _Limiter(_max_concurrent())
 
 
 def register() -> SystemOnePlugin:

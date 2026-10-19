@@ -175,6 +175,7 @@ def client(monkeypatch):
     app.state.systemone_served_model = "granite-switch"
     app.state.systemone_adapter_name = "decision"
     app.state.systemone_renderer = lambda *args: ([], [])
+    app.state.systemone_limiter = sp._Limiter(0)
     return TestClient(app)
 
 

@@ -586,3 +586,48 @@ def test_parse_strict_json_rejects_lone_surrogates():
     rather than letting the tokenizer fail with an internal message."""
     with pytest.raises(ValueError, match="surrogate"):
         sp._parse_strict_json(b'{"state": "\\ud800 x"}')
+
+
+def test_systemone_rejects_more_questions_than_the_cap():
+    """jev's schema sets no question limit, but each question is one engine request."""
+    questions = {f"q{i}": {"type": "noul"} for i in range(sp.MAX_QUESTIONS + 1)}
+    with pytest.raises(PydanticValidationError):
+        sp.SystemOneRequest.model_validate({"model": "m", "state": "x", "questions": questions})
+    sp.SystemOneRequest.model_validate(
+        {"model": "m", "state": "x", "questions": dict(list(questions.items())[: sp.MAX_QUESTIONS])}
+    )
+
+
+def test_concurrency_limit_rejects_with_503_when_full():
+    """SYSTEMONE_MAX_CONCURRENT_REQUESTS bounds decision requests in flight; past it, 503."""
+
+    async def run():
+        limiter = sp._Limiter(1)
+        release = asyncio.Event()
+
+        async def hold():
+            async with limiter.slot() as ok:
+                assert ok
+                await release.wait()
+
+        holder = asyncio.ensure_future(hold())
+        await asyncio.sleep(0)
+        async with limiter.slot() as ok:
+            second = ok
+        release.set()
+        await holder
+        async with limiter.slot() as ok:
+            third = ok
+        return second, third
+
+    assert asyncio.run(run()) == (False, True)
+
+
+def test_concurrency_limit_zero_means_unlimited():
+    async def run():
+        limiter = sp._Limiter(0)
+        async with limiter.slot() as a:
+            async with limiter.slot() as b:
+                return a and b
+
+    assert asyncio.run(run())
