@@ -11,7 +11,8 @@ two decision APIs, on the same server and GPU cache as `/v1/chat/completions`:
 Each question is answered by one engine read of the adapter's single-token option labels,
 returned as calibrated probabilities. Callers need no prompt format, marker or label scheme.
 
-What has and has not been tested is in [docs/STATUS.md](docs/STATUS.md).
+What has and has not been tested is in [docs/STATUS.md](docs/STATUS.md); how to run
+the tests is in [docs/TESTING.md](docs/TESTING.md).
 
 ## Install
 
@@ -24,10 +25,11 @@ docker run -d --gpus all -p 8000:8000 \
     granite-switch-systemone
 ```
 
-The image is `vllm/vllm-openai:v0.26.0-cu129` plus `granite-switch[vllm]==0.1.1`,
+The image is `vllm/vllm-openai:v0.30.0-cu129` plus `granite-switch[vllm]==0.1.1`,
 `transformers==5.17.0` and this plugin. Weights are not baked in: mount a downloaded
-checkpoint at `/repository`, or set `MODEL_DIR`. No image is published yet, and the image
-has not been tested (see [docs/STATUS.md](docs/STATUS.md)); the install below has.
+checkpoint at `/repository`, or set `MODEL_DIR`. No image is published. **The image does
+not currently build** (a torch version conflict in the base image, see
+[docs/STATUS.md](docs/STATUS.md)); use the install below, which is tested.
 
 ### Into an existing vLLM environment
 
@@ -58,7 +60,7 @@ listed, and once the variable is set it loads nothing else, so leaving out
 | Flag | Why |
 |---|---|
 | `--dtype bfloat16` | Composed checkpoints carry `torch_dtype: null` ([granite-switch#126](https://github.com/generative-computing/granite-switch/issues/126)); vLLM would otherwise load float32. |
-| `--attention-config.flash_attn_version=2` | Avoids an FA3 schedule bug with CUDA graphs and prefix caching ([granite-switch#139](https://github.com/generative-computing/granite-switch/issues/139), open). |
+| `--attention-config.flash_attn_version=2` | Avoids an FA3 schedule bug with CUDA graphs and prefix caching ([granite-switch#139](https://github.com/generative-computing/granite-switch/issues/139), open). With granite-switch 0.1.1 we measured FA3 the same as FA2 for answers and speed, so this is a precaution. |
 | `--enable-prompt-tokens-details` | vLLM reports each request's prefix-cache hits; `/v1/decisions` returns them as `usage.input_tokens_details`. Without it both counts are 0. |
 | `--max-logprobs 256` | For chat clients that read labels by top-K logprobs (vLLM's default cap is 20). The plugin does not need it. |
 | `--enable-auto-tool-choice --tool-call-parser granite4` | Tool calling on the shared chat route. |
@@ -143,17 +145,15 @@ equivalent questions and return the same probabilities.
 ## Testing
 
 ```bash
-pip install -e ".[dev]" && pytest                      # unit and spec tests, no GPU
-python3 scripts/e2e_check.py --base-url http://localhost:8000
+pip install -e ".[dev]" && pytest                              # unit and spec tests, no GPU
+python3 scripts/e2e_check.py --base-url http://localhost:8000   # live wire checks
+python3 scripts/probe_check.py --base-url http://localhost:8000 # live robustness checks
 ```
 
-`tests/test_openai_spec.py` validates `/v1/decisions` against OpenAI's published OpenAPI
-schema (`tests/spec/openai_decisions.json`, copied verbatim, MIT). `scripts/e2e_check.py`
-checks a live server: both routes' answers and parity, errors, usage, chat on the same
-server, and prefix-cache hits. Run it on a server with no other traffic, as it reads
-vLLM's server-wide `/metrics`. Set `SYSTEMONE_TOKENIZER` to the checkpoint to run
-`tests/test_prefix_sharing.py`, which needs `transformers>=5.16`.
+[docs/TESTING.md](docs/TESTING.md) lists every test, what runs in CI and what needs a
+tokenizer or a live server.
 
 ## License
 
-Apache-2.0.
+Apache-2.0. Parts adapted from MIT-licensed code are listed, with their notices, in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

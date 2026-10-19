@@ -10,7 +10,8 @@
 # model's weights at a pinned revision -- see ASR_MODEL/ASR_REVISION below):
 #   docker build --platform linux/amd64 --build-arg WITH_ASR=1 \
 #       -t <your-registry>/granite-switch-systemone:<tag>-asr .
-FROM vllm/vllm-openai:v0.26.0-cu129
+# vLLM 0.30, the version this plugin is tested on live (granite-switch 0.1.1 supports 0.26-0.30).
+FROM vllm/vllm-openai:v0.30.0-cu129
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG GRANITE_SWITCH_VERSION=0.1.1
