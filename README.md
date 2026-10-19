@@ -40,7 +40,7 @@ Prerequisites:
 
 ```bash
 pip install "granite-switch[vllm]==0.1.1" "transformers>=5.16"
-pip install git+https://github.com/planetf1/granite-switch-systemone@feat/v1-decisions-endpoint
+pip install git+https://github.com/generative-computing/granite-switch-systemone
 export VLLM_PLUGINS=register_granite_switch,granite_switch_systemone
 export SYSTEMONE_INVOCATION_MARKER="### DECISION"
 vllm serve ibm-granite/granite-switch-4.1-8b --served-model-name granite-switch \
@@ -85,6 +85,8 @@ callers cannot change them:
 | `SYSTEMONE_ADAPTER_NAME` | the only adapter, else `decision` | Which adapter answers. Checked against the checkpoint's adapter list at startup; an unknown name stops the server. |
 | `SYSTEMONE_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. Required: with a wrong marker the chat template activates the adapter in the wrong place without raising. |
 | `SYSTEMONE_RENDERER` | `granite_switch_systemone.renderer:render` | `module:function` that builds the prompt and label ids, for a differently trained adapter. |
+| `SYSTEMONE_MAX_CONCURRENT_REQUESTS` | `0` (no cap) | Decision requests in flight on both routes; past it a request gets 503 at once, so decision bursts cannot queue indefinitely ahead of chat. |
+| `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT` | `0` | Experimental, may be removed. `1` adds the trained decision-engine system prompt, as used for the model card's published score; it stops chat requests sharing the decision prefix cache. |
 
 Both routes share these; nothing is configured per route.
 
@@ -112,11 +114,12 @@ equivalent questions and return the same probabilities.
   lettered options (A–Z, then 0–9, then two-letter labels), read as a softmax over the
   label logits. Predicates render "A: No / false", "B: Yes / true". An option without a
   description is described by its value.
-- **No system prompt.** This lets a decision share the prefix cache with a chat request
+- **No system prompt by default.** This lets a decision share the prefix cache with a chat request
   whose first turn is the same `State:` turn. Any chat with its own system prompt, or
   that sends the state without `State:`, shares nothing; decisions about one state always
   share it with each other. The model card's published score used a system prompt, and in
-  our tests it scored higher on rating (`score`) questions without changing yes/no ones.
+  our tests it scored higher on rating (`score`) questions without changing yes/no ones;
+  `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1` turns it on.
 - **Caller text is escaped.** Special tokens and the invocation marker inside state,
   instructions or descriptions are broken with an invisible U+2060, so they cannot forge
   turns or move the adapter's activation point.
@@ -124,7 +127,7 @@ equivalent questions and return the same probabilities.
   layout has one text state turn. `/v1/systemone` rejects unknown fields and `box`
   questions.
 - **Size.** The state, instructions and options of each question are counted before any
-  engine work: at most 32k tokens per question and 64k per request (262k with
+  engine work: at most 200 questions, 32k tokens per question and 64k per request (262k with
   `TypeSafe-Danger-Zone-Long-Context: true` on `/v1/systemone`), capped by
   `--max-model-len`. Bodies over 32 MiB, nesting deeper than 64 and non-finite numbers
   are rejected.

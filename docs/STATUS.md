@@ -22,6 +22,9 @@ transformers 5.17, `ibm-granite/granite-switch-4.1-8b`, one H100.
 
 - **The Docker image.** The Dockerfile has not been built or run with the current
   defaults. Until it is, prefer the plugin-only install.
+- **Installing from this repository.** The plugin-only install was verified from the
+  earlier development fork; `generative-computing/granite-switch-systemone` is private,
+  so installing from it needs repository access.
 - **vLLM 0.26 to 0.29.** Every live run used 0.30.0. The code paths that differ by
   version (where vLLM keeps `ErrorResponse`) are unit-tested with stand-in modules only.
 - **Other checkpoints.** Only the 8b. The 3b and 30b have the same adapter layout but have
@@ -37,12 +40,12 @@ transformers 5.17, `ibm-granite/granite-switch-4.1-8b`, one H100.
 ## Known gaps
 
 - **Decision load slows chat.** Chat p50 for a 32-token reply went from 235 ms idle to
-  1,088 ms with 128 concurrent decision clients. There is no cap or priority between the
-  two kinds of traffic.
-- **`/v1/systemone` has no question limit.** jev's schema sets none, and each question is
-  one engine request.
-- **`scripts/e2e_check.py` compares routes to 1e-6.** Engine reads are not bit-identical
-  between batched and solo requests, so the check can fail on a busy server.
-- **No system prompt.** The model card's published score used one; this plugin omits it so
-  decisions can share the prefix cache with chat. Our comparisons found it raises accuracy
-  on rating (`score`) questions.
+  1,088 ms with 128 concurrent decision clients. `SYSTEMONE_MAX_CONCURRENT_REQUESTS` caps
+  decision requests in flight (503 past it); it is off by default, not yet measured live,
+  and there is no priority between the two kinds of traffic.
+- **Question limit on `/v1/systemone`.** Now 200 per request, as on `/v1/decisions`;
+  unit-tested, not yet probed live.
+- **No system prompt by default.** The model card's published score used one; this plugin
+  omits it so decisions can share the prefix cache with chat. Our comparisons found it
+  raises accuracy on rating (`score`) questions. `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1`
+  turns it on, and has been unit-tested only.
