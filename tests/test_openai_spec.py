@@ -1,10 +1,7 @@
-"""Conformance of /v1/decisions to OpenAI's published OpenAPI spec, checked by a JSON
-Schema validator against the spec itself rather than against bounds copied from it.
-
-tests/spec/openai_decisions.json is the `POST /decisions` request and response schemas,
-with everything they reference, extracted verbatim from openai/openai-openapi (commit
-and licence recorded in the file). To refresh it, re-extract from a newer commit and
-update the `source` field; any new disagreement then shows up here.
+"""Conformance of /v1/decisions to OpenAI's published OpenAPI schema, checked with a JSON
+Schema validator. The schema is fetched at test time from openai/openai-openapi (MIT) at a
+pinned commit and hash; see tests/specs.py. The test skips, saying how to supply it, when
+it cannot be fetched.
 
 Every spec-valid request must answer 200 and every 200 body must validate against
 `DecisionResponse`, except the deliberate limits listed in `UNSUPPORTED`, which must
@@ -14,25 +11,17 @@ leniencies in `ACCEPTED_LENIENTLY`.
   python3 -m pytest tests/test_openai_spec.py -v
 """
 
-import json
-from pathlib import Path
-
 import pytest
 
 from granite_switch_systemone import plugin as sp
 
-jsonschema = pytest.importorskip("jsonschema")
+pytest.importorskip("jsonschema")
+from specs import OPENAI_REASON, openai_validators  # noqa: E402
 
-SPEC = json.loads((Path(__file__).parent / "spec" / "openai_decisions.json").read_text())
-
-
-def _validator(name: str):
-    defs = json.loads(json.dumps(SPEC["schemas"]).replace("#/components/schemas/", "#/$defs/"))
-    return jsonschema.Draft202012Validator({"$ref": f"#/$defs/{name}", "$defs": defs})
-
-
-REQUEST = _validator("DecisionRequest")
-RESPONSE = _validator("DecisionResponse")
+_validators = openai_validators("DecisionRequest", "DecisionResponse")
+if _validators is None:
+    pytest.skip(OPENAI_REASON, allow_module_level=True)
+REQUEST, RESPONSE = _validators
 
 PREDICATE = {"type": "predicate", "instructions": "Is it urgent?"}
 CHOICE = {
@@ -140,7 +129,7 @@ def _errors(validator, instance):
 
 @pytest.fixture()
 def client(monkeypatch):
-    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer):
+    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer, reads=None):
         if q.type == "choice":
             keys = list(q.criteria)
             answer = {
@@ -177,11 +166,6 @@ def client(monkeypatch):
     app.state.systemone_renderer = lambda *args: ([], [])
     app.state.systemone_limiter = sp._Limiter(0)
     return TestClient(app)
-
-
-def test_vendored_spec_is_the_published_decisions_operation():
-    assert SPEC["operation"]["operationId"] == "createDecision"
-    assert SPEC["source"].startswith("https://github.com/openai/openai-openapi/blob/")
 
 
 @pytest.mark.parametrize("name", VALID)

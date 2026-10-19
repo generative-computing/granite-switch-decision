@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,8 +7,11 @@ name = "granite-switch-systemone"
 version = "0.1.0"
 description = "jev system-one (/v1/systemone) and OpenAI Decisions (/v1/decisions) APIs as vLLM endpoint plugins for granite-switch, mounted alongside /v1/chat/completions on the same server."
 readme = "README.md"
-license = "Apache-2.0"
-requires-python = ">=3.10"
+# SPDX license expressions and license-files need setuptools 77.
+license = "Apache-2.0 AND MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+# granite-switch 0.1.1 requires Python 3.11-3.13.
+requires-python = ">=3.11"
 # fastapi/pydantic/starlette are already runtime dependencies of vllm (which the
 # container this ships in always has installed) -- not re-declared here on purpose,
 # to use whatever versions the vLLM image already pins rather than risking a resolver
@@ -19,8 +22,9 @@ dependencies = []
 # fastapi/pydantic are vllm's own runtime dependencies; declared here only for
 # running this package's own tests/lint outside a vLLM container (e.g. in CI).
 # httpx backs fastapi's TestClient for the route-level tests in test_decisions.py;
-# jsonschema validates /v1/decisions against OpenAI's spec in test_openai_spec.py.
-dev = ["fastapi", "pydantic", "pytest", "ruff", "httpx", "jsonschema"]
+# jsonschema validates both routes against published schemas (tests/specs.py); typesafe-sdk
+# (MIT) supplies jev's wire models for the /v1/systemone schema test.
+dev = ["fastapi", "pydantic", "pytest", "ruff", "httpx", "jsonschema", "typesafe-sdk==0.7.5"]
 
 [project.entry-points."vllm.endpoint_plugins"]
 granite_switch_systemone = "granite_switch_systemone.plugin:register"
@@ -30,10 +34,11 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 
 [tool.ruff]
 line-length = 119
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
