@@ -127,23 +127,22 @@ def test_validation_error_response_matches_jev_shape():
 # --------------------------------------------------------------------------------------------
 
 
-def test_check_json_value_nesting_depth_ok_at_limit():
+def _nested_state(levels):
     value = {}
     cur = value
-    for _ in range(sp.MAX_NESTING_DEPTH - 1):
+    for _ in range(levels - 1):
         cur["x"] = {}
         cur = cur["x"]
-    sp._check_json_value(value)  # must not raise
+    return {"state": value}
+
+
+def test_check_json_value_nesting_depth_ok_at_limit():
+    sp._check_json_value(_nested_state(sp.MAX_NESTING_DEPTH))  # must not raise
 
 
 def test_check_json_value_rejects_excess_nesting():
-    value = {}
-    cur = value
-    for _ in range(sp.MAX_NESTING_DEPTH + 5):
-        cur["x"] = {}
-        cur = cur["x"]
     with pytest.raises(ValueError, match="nesting"):
-        sp._check_json_value(value)
+        sp._check_json_value(_nested_state(sp.MAX_NESTING_DEPTH + 5))
 
 
 def test_check_json_value_rejects_non_finite_floats():
@@ -219,8 +218,9 @@ def test_softmax_sums_to_one_and_prefers_higher_logprob():
     ],
 )
 def test_confidence_matches_official_test_vectors(fn_name, probs, expected):
-    """Pinned against the official typesafe-ai/system-one-adapter-python's own test
-    vectors (tests/utils/test_confidence_metrics.py), not values we made up."""
+    """Test vectors from typesafe-ai/system-one-adapter-python's
+    tests/utils/test_confidence_metrics.py (MIT, Copyright (c) 2026 TypeSafe AI); see
+    THIRD_PARTY_NOTICES.md."""
     fn = getattr(sp, fn_name)
     assert fn(probs) == pytest.approx(expected)
 
@@ -636,6 +636,7 @@ def test_concurrency_limit_zero_means_unlimited():
 def test_init_state_fails_startup_on_a_bad_system_prompt_flag(monkeypatch):
     from types import SimpleNamespace as NS
 
+    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "### DECISION")
     monkeypatch.setenv("SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT", "yes")
     chat = _FakeChat(["decision"])
     chat.renderer = NS(tokenizer=None)
@@ -644,3 +645,113 @@ def test_init_state_fails_startup_on_a_bad_system_prompt_flag(monkeypatch):
     args = NS(served_model_name=["m"], model="m")
     with pytest.raises(RuntimeError, match="SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT"):
         asyncio.run(sp.SystemOnePlugin().init_state(None, state, args))
+
+
+def test_init_state_fails_startup_without_an_invocation_marker(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    monkeypatch.delenv("SYSTEMONE_INVOCATION_MARKER", raising=False)
+    monkeypatch.delenv("SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT", raising=False)
+    chat = _FakeChat(["decision"])
+    chat.renderer = NS(tokenizer=None)
+    chat.model_config.max_model_len = 8192
+    state = NS(openai_serving_chat=chat)
+    args = NS(served_model_name=["m"], model="m")
+    with pytest.raises(RuntimeError, match="SYSTEMONE_INVOCATION_MARKER"):
+        asyncio.run(sp.SystemOnePlugin().init_state(None, state, args))
+
+
+def test_parse_strict_json_rejects_deep_nesting_before_parsing():
+    """json.loads recurses past Python's limit on deep input and raises RecursionError."""
+    with pytest.raises(ValueError, match="nesting"):
+        sp._parse_strict_json(b"[" * 100_000 + b"]" * 100_000)
+
+
+@pytest.mark.parametrize("where", ["state", "instructions", "criteria"])
+def test_nesting_limit_is_64_levels_per_field(where):
+    """jev: at most 64 nested levels in each of state, instructions and criteria."""
+
+    def nest(n):
+        value = "x"
+        for _ in range(n):
+            value = [value]
+        return value
+
+    def body(n):
+        if where == "state":
+            return {"state": nest(n)}
+        return {"questions": {"q": {where: nest(n)}}}
+
+    sp._check_json_value(body(64))
+    with pytest.raises(ValueError, match="nesting"):
+        sp._check_json_value(body(65))
+
+
+def test_engine_error_status_need_not_be_a_standard_http_status():
+    assert sp.EngineError("x", 529).status == 529
+    assert sp.EngineError("x", 200).status == 500
+
+
+def test_missing_label_logprob_is_an_engine_error(monkeypatch):
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk):
+        return _fake_chat_response(label_ids_chunk[:-1], 10, None, None)
+
+    monkeypatch.setattr(sp, "_fetch_label_logprobs", fake_fetch)
+    q = sp.Question(type="noul", instructions="q?")
+    renderer = lambda tok, state, instructions, descs: ([], [1, 2])  # noqa: E731
+    with pytest.raises(sp.EngineError, match="no logprob"):
+        asyncio.run(sp._answer_question("q", q, "s", None, None, "m", "decision", renderer))
+
+
+def test_a_failing_label_chunk_cancels_its_sibling(monkeypatch):
+    """The sibling must be cancelled before the error reaches the caller, not left
+    running (asyncio.run would cancel it at shutdown anyway, so check inside the loop)."""
+    sibling = {}
+
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk):
+        if label_ids_chunk[0] == 0:
+            await asyncio.sleep(0)
+            raise sp.EngineError("boom", 500)
+        sibling["task"] = asyncio.current_task()
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(sp, "_fetch_label_logprobs", fake_fetch)
+    q = sp.Question(type="choice", instructions="Which?", criteria={f"o{i}": None for i in range(200)})
+    renderer = lambda tok, state, instructions, descs: ([], list(range(len(descs))))  # noqa: E731
+
+    async def run():
+        with pytest.raises(sp.EngineError):
+            await sp._answer_question("q", q, "s", None, None, "m", "decision", renderer)
+        return sibling["task"].done()
+
+    assert asyncio.run(run())
+
+
+def test_engine_reads_per_request_are_bounded(monkeypatch):
+    in_flight, peak = [0], [0]
+
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk):
+        in_flight[0] += 1
+        peak[0] = max(peak[0], in_flight[0])
+        await asyncio.sleep(0.01)
+        in_flight[0] -= 1
+        return _fake_chat_response(label_ids_chunk, 10, None, None)
+
+    monkeypatch.setattr(sp, "_fetch_label_logprobs", fake_fetch)
+    from types import SimpleNamespace as NS
+
+    state = NS(
+        systemone_chat=None,
+        systemone_tokenizer=None,
+        systemone_served_model="m",
+        systemone_adapter_name="decision",
+        systemone_renderer=lambda tok, s, i, descs: ([], list(range(len(descs)))),
+    )
+    questions = [(str(i), sp.Question(type="noul", instructions="q?")) for i in range(60)]
+    asyncio.run(sp._answer_all(state, "s", questions))
+    assert peak[0] == sp.MAX_READS_PER_REQUEST
+
+
+def test_identity_content_encoding_is_accepted():
+    assert sp._check_content_headers({"content-encoding": "identity"}) is None
+    assert sp._check_content_headers({"content-encoding": "gzip"})[0] == 415

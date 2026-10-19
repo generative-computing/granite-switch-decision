@@ -286,7 +286,7 @@ def test_score_answer_carries_original_labels():
 
 @pytest.fixture()
 def client(monkeypatch):
-    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer):
+    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer, reads=None):
         if q.type == "choice":
             keys = list(q.criteria)
             probs = [0.8, 0.2] + [0.0] * (len(keys) - 2)
@@ -461,6 +461,6 @@ def test_full_limiter_returns_503_on_both_routes(client):
     client.app.state.systemone_limiter.in_flight = 1
     body = {"model": "m", "input": "x", "questions": [{"type": "predicate", "instructions": "q?"}]}
     resp = client.post("/v1/decisions", json=body)
-    assert resp.status_code == 503 and resp.json()["error"]["type"] == "invalid_request_error"
+    assert resp.status_code == 503 and resp.json()["error"]["type"] == "server_error"
     resp = client.post("/v1/systemone", json={"model": "m", "state": "x", "questions": {"q": {"type": "noul"}}})
     assert resp.status_code == 503 and resp.json()["error"]["code"] == 503

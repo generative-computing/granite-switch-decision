@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import importlib
 import json
+import logging
 import math
 import os
 from http import HTTPStatus
@@ -30,6 +31,8 @@ if TYPE_CHECKING:
     from starlette.datastructures import State
     from vllm.engine.protocol import EngineClient
 
+_log = logging.getLogger(__name__)
+
 _RENDERER_ENV = "SYSTEMONE_RENDERER"
 _DEFAULT_RENDERER = "granite_switch_systemone.renderer:render"
 _ADAPTER_NAME_ENV = "SYSTEMONE_ADAPTER_NAME"
@@ -45,10 +48,12 @@ DEFAULT_PER_REQUEST_TOKEN_LIMIT = 64_000
 DANGER_ZONE_TOKEN_LIMIT = 262_144
 DANGER_ZONE_HEADER = "typesafe-danger-zone-long-context"
 # vLLM's MAX_LOGPROB_TOKEN_IDS; a choice with more labels is read in chunks of this size.
-# Questions per request on /v1/systemone, matching OpenAI's 200 on /v1/decisions.
+MAX_LABEL_OPTIONS = 128
+# Questions per request on both routes (OpenAI's limit on /v1/decisions).
 MAX_QUESTIONS = 200
 _MAX_CONCURRENT_ENV = "SYSTEMONE_MAX_CONCURRENT_REQUESTS"
-MAX_LABEL_OPTIONS = 128
+# Engine reads in flight per request, so one wide request cannot flood the engine.
+MAX_READS_PER_REQUEST = 16
 
 
 def _load_renderer():
@@ -250,8 +255,8 @@ class DecisionRequest(BaseModel):
     def _check_questions(self) -> DecisionRequest:
         # OpenAI: "Ask 1-200 questions about the input. ... Answers come back in the
         # same order."
-        if not (1 <= len(self.questions) <= 200):
-            raise ValueError("`questions` must contain 1-200 entries")
+        if not 1 <= len(self.questions) <= MAX_QUESTIONS:
+            raise ValueError(f"`questions` must contain 1-{MAX_QUESTIONS} entries")
         return self
 
 
@@ -262,7 +267,7 @@ def _check_content_headers(headers) -> tuple[int, str] | None:
     """Content-Encoding (415) and a Content-Length-header fast path for 413. Returns
     `(status_code, message)` on violation, else None. `headers` only needs `.get`, so
     this is testable with a plain dict as well as Starlette's real `Headers`."""
-    if headers.get("content-encoding"):
+    if headers.get("content-encoding", "identity").strip().lower() != "identity":
         return (HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Encoding is not supported")
     content_length = headers.get("content-length")
     if content_length is not None:
@@ -286,19 +291,19 @@ def _reject_json_constant(token: str) -> None:
     raise ValueError(f"non-finite number literal {token!r} is not allowed")
 
 
-def _check_json_value(value: Any, depth: int = 0) -> None:
-    """Recursively enforce jev's nesting (<=64 levels anywhere in the body) and
-    finite-number rules on already-parsed JSON. Raises ValueError on either
-    violation."""
-    if depth > MAX_NESTING_DEPTH:
+def _check_json_value(value: Any, depth: int | None = None) -> None:
+    """Enforce finite numbers and valid text everywhere, and jev's nesting rule: at most
+    64 nested levels inside each of `state`, `instructions` and `criteria` (depth is
+    None until one of those fields is entered)."""
+    if depth is not None and depth > MAX_NESTING_DEPTH:
         raise ValueError(f"request body nesting exceeds {MAX_NESTING_DEPTH} levels")
     if isinstance(value, dict):
         for k, v in value.items():
-            _check_json_value(k, depth + 1)
-            _check_json_value(v, depth + 1)
+            _check_json_value(k, depth)
+            _check_json_value(v, _NESTED_FIELDS.get(k, depth) if depth is None else depth + 1)
     elif isinstance(value, list):
         for v in value:
-            _check_json_value(v, depth + 1)
+            _check_json_value(v, None if depth is None else depth + 1)
     elif isinstance(value, float) and not math.isfinite(value):
         raise ValueError(f"number {value!r} is not finite")
     elif isinstance(value, str):
@@ -306,6 +311,33 @@ def _check_json_value(value: Any, depth: int = 0) -> None:
             value.encode("utf-8")
         except UnicodeEncodeError as e:
             raise ValueError("request body contains a lone surrogate escape, which is not valid text") from e
+
+
+# The fields whose contents jev's nesting limit applies to; the field itself is level 0.
+_NESTED_FIELDS = {"state": 0, "instructions": 0, "criteria": 0}
+
+
+def _max_bracket_depth(text: str) -> int:
+    """Deepest `[`/`{` nesting outside strings; cheap, and run before json.loads, which
+    recurses and raises RecursionError on very deep input."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "[{":
+            depth += 1
+            deepest = max(deepest, depth)
+        elif ch in "]}":
+            depth -= 1
+    return deepest
 
 
 def _parse_strict_json(body: bytes) -> Any:
@@ -317,9 +349,12 @@ def _parse_strict_json(body: bytes) -> Any:
         text = body.decode("utf-8")
     except UnicodeDecodeError as e:
         raise ValueError(f"request body is not valid UTF-8: {e}") from e
+    # Envelope (body, questions map, question) plus 64 levels inside a field.
+    if _max_bracket_depth(text) > MAX_NESTING_DEPTH + 3:
+        raise ValueError(f"request body nesting exceeds {MAX_NESTING_DEPTH} levels")
     try:
         data = json.loads(text, parse_constant=_reject_json_constant)
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, RecursionError) as e:
         raise ValueError(f"request body is not valid JSON: {e}") from e
     _check_json_value(data)
     return data
@@ -339,7 +374,7 @@ def _validation_error_response(e: PydanticValidationError) -> JSONResponse:
     return JSONResponse(content={"detail": detail}, status_code=int(HTTPStatus.UNPROCESSABLE_ENTITY))
 
 
-def _error(status: HTTPStatus, message: str) -> JSONResponse:
+def _error(status: int, message: str) -> JSONResponse:
     """For the status codes jev's OpenAPI spec does NOT give a documented body shape
     for (400/413/415 -- only 422's HTTPValidationError is in the spec); see
     `_validation_error_response` for 422 itself."""
@@ -349,7 +384,7 @@ def _error(status: HTTPStatus, message: str) -> JSONResponse:
     )
 
 
-def _openai_error(status: HTTPStatus, message: str, param: str | None = None, code: str | None = None) -> JSONResponse:
+def _openai_error(status: int, message: str, param: str | None = None, code: str | None = None) -> JSONResponse:
     """OpenAI's documented error body for the /v1/decisions route
     (`{"error": {"message", "type", "param", "code"}}`): the official SDKs parse
     this shape on this route, which is the point of speaking it."""
@@ -357,7 +392,7 @@ def _openai_error(status: HTTPStatus, message: str, param: str | None = None, co
         content={
             "error": {
                 "message": message,
-                "type": "invalid_request_error",
+                "type": "invalid_request_error" if int(status) < 500 else "server_error",
                 "param": param,
                 "code": code,
             }
@@ -418,7 +453,8 @@ def _enforce_context_limits(
         )
 
 
-# jev's confidence formulas, from typesafe-ai/system-one-adapter-python.
+# jev's confidence formulas, adapted from typesafe-ai/system-one-adapter-python (MIT,
+# Copyright (c) 2026 TypeSafe AI); see THIRD_PARTY_NOTICES.md.
 
 
 def _softmax(logps: list[float]) -> list[float]:
@@ -550,7 +586,8 @@ async def _fetch_label_logprobs(
     resp = await chat.create_chat_completion(req)
     if isinstance(resp, ErrorResponse):
         raise EngineError(resp.error.message, resp.error.code)
-    assert isinstance(resp, ChatCompletionResponse)
+    if not isinstance(resp, ChatCompletionResponse):
+        raise EngineError(f"unexpected engine response {type(resp).__name__}", 500)
     return resp
 
 
@@ -563,8 +600,11 @@ async def _answer_question(
     served_model: str,
     adapter_name: str,
     renderer,
-) -> tuple[str, dict[str, Any], tuple[int, int]]:
-    """Returns (name, jev-shaped answer dict, this question's TokenUsage)."""
+    reads: asyncio.Semaphore | None = None,
+) -> tuple[str, dict[str, Any], TokenUsage]:
+    """Returns (name, jev-shaped answer dict, this question's TokenUsage). `reads` bounds
+    the engine reads in flight across one request's questions."""
+    reads = reads or asyncio.Semaphore(MAX_READS_PER_REQUEST)
     if q.type == "choice":
         keys = list(q.criteria)
         # An option without a description is described by its key, as vLLM's native strategy does.
@@ -580,17 +620,27 @@ async def _answer_question(
     msgs, label_ids = renderer(tok, state, q.instructions, descs)
 
     # Over 128 labels: one request per chunk, same prompt, so later chunks hit the prefix cache.
-    responses = await asyncio.gather(
-        *(
-            _fetch_label_logprobs(chat, served_model, adapter_name, msgs, chunk)
-            for chunk in _chunk_label_ids(label_ids)
-        )
-    )
+    async def read(chunk: list[int]):
+        async with reads:
+            return await _fetch_label_logprobs(chat, served_model, adapter_name, msgs, chunk)
+
+    tasks = [asyncio.ensure_future(read(chunk)) for chunk in _chunk_label_ids(label_ids)]
+    try:
+        responses = await asyncio.gather(*tasks)
+    except BaseException:
+        await _cancel_pending(tasks)
+        raise
 
     by_id: dict[int, float] = {}
     for resp in responses:
-        top_logprobs = resp.choices[0].logprobs.content[0].top_logprobs
+        try:
+            top_logprobs = resp.choices[0].logprobs.content[0].top_logprobs
+        except (AttributeError, IndexError, TypeError) as e:
+            raise EngineError("the engine returned no label logprobs", 500) from e
         by_id.update({int(t.token.split(":", 1)[1]): t.logprob for t in top_logprobs})
+    missing = [tid for tid in label_ids if tid not in by_id]
+    if missing:
+        raise EngineError(f"the engine returned no logprob for {len(missing)} option labels", 500)
     # Every chunk is a separate engine request over the same prompt, so usage counts each.
     usage = _sum_usage([_chunk_usage(resp.usage) for resp in responses])
 
@@ -642,7 +692,7 @@ _BUSY = "too many decision requests in flight; retry later"
 
 def _max_concurrent() -> int:
     value = os.environ.get(_MAX_CONCURRENT_ENV, "0")
-    if not value.isdigit():
+    if not (value.isascii() and value.isdigit()):
         raise RuntimeError(f"{_MAX_CONCURRENT_ENV}={value!r} must be a non-negative integer")
     return int(value)
 
@@ -657,17 +707,19 @@ async def _run_until_disconnect(request: Request, work):
 
     work_task = asyncio.ensure_future(work)
     watch_task = asyncio.ensure_future(disconnected())
-    done, _ = await asyncio.wait([work_task, watch_task], return_when=asyncio.FIRST_COMPLETED)
-    if work_task in done:
-        watch_task.cancel()
-        return work_task.result()
-    work_task.cancel()
-    await asyncio.gather(work_task, return_exceptions=True)
-    return None
+    try:
+        done, _ = await asyncio.wait([work_task, watch_task], return_when=asyncio.FIRST_COMPLETED)
+        if work_task in done:
+            return work_task.result()
+        return None
+    finally:
+        await _cancel_pending([work_task, watch_task])
 
 
 async def _answer_all(state, state_value: Any, questions: list[tuple[str, Question]]) -> list:
-    """Answer every question concurrently; if one fails, cancel the rest and re-raise."""
+    """Answer every question concurrently, at most MAX_READS_PER_REQUEST engine reads at a
+    time; if one fails, cancel the rest and re-raise."""
+    reads = asyncio.Semaphore(MAX_READS_PER_REQUEST)
     tasks = [
         asyncio.ensure_future(
             _answer_question(
@@ -679,6 +731,7 @@ async def _answer_all(state, state_value: Any, questions: list[tuple[str, Questi
                 state.systemone_served_model,
                 state.systemone_adapter_name,
                 state.systemone_renderer,
+                reads,
             )
         )
         for key, q in questions
@@ -730,9 +783,7 @@ def _decisions_question_to_internal(question: DecisionQuestion, index: int) -> t
         internal = Question(type="choice", instructions=question.instructions, criteria=criteria)
         extras = {"value_map": {_choice_key(c.value): c.value for c in question.choices}}
     else:
-        descriptions = [
-            level.description if level.description is not None else level.label for level in question.levels
-        ]
+        descriptions = [level.description or level.label for level in question.levels]
         internal = Question(type="score", instructions=question.instructions, criteria=descriptions)
         extras = {"labels": [level.label for level in question.levels]}
     return str(index), internal, extras
@@ -822,7 +873,7 @@ async def _handle_systemone(raw_request: Request) -> Response:
                 raw_request, _answer_all(state, req.state, list(req.questions.items()))
             )
         except EngineError as e:
-            return _error(HTTPStatus(e.status), str(e))
+            return _error(e.status, str(e))
     if results is None:
         return Response(status_code=499)
 
@@ -893,7 +944,7 @@ async def _handle_decisions(raw_request: Request) -> Response:
         try:
             results = await _run_until_disconnect(raw_request, work)
         except EngineError as e:
-            return _openai_error(HTTPStatus(e.status), str(e))
+            return _openai_error(e.status, str(e))
     if results is None:
         return Response(status_code=499)
 
@@ -926,12 +977,12 @@ router = APIRouter()
 
 
 @router.post("/v1/systemone")
-async def create_systemone(raw_request: Request) -> JSONResponse:
+async def create_systemone(raw_request: Request) -> Response:
     return await _handle_systemone(raw_request)
 
 
 @router.post("/v1/decisions")
-async def create_decisions(raw_request: Request) -> JSONResponse:
+async def create_decisions(raw_request: Request) -> Response:
     return await _handle_decisions(raw_request)
 
 
@@ -948,6 +999,7 @@ class SystemOnePlugin:
     async def init_state(self, engine_client: EngineClient | None, state: State, args: Namespace) -> None:
         chat = getattr(state, "openai_serving_chat", None)
         if chat is None:
+            _log.warning("granite_switch_systemone: no chat serving object; decision routes return 501")
             return
         state.systemone_chat = chat
         state.systemone_tokenizer = chat.renderer.tokenizer
@@ -962,7 +1014,8 @@ class SystemOnePlugin:
 
 def _check_renderer_settings(renderer) -> None:
     """Fail startup on a bad renderer setting rather than on the first request."""
-    check = getattr(importlib.import_module(renderer.__module__), "check_settings", None)
+    module = getattr(renderer, "__module__", None) or getattr(getattr(renderer, "func", None), "__module__", None)
+    check = getattr(importlib.import_module(module), "check_settings", None) if module else None
     if check:
         check()
 

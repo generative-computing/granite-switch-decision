@@ -46,6 +46,7 @@ def _system_prompt_enabled() -> bool:
 
 def check_settings() -> None:
     """Raise on bad renderer settings; the plugin calls this at startup."""
+    _invocation_marker()
     _system_prompt_enabled()
 
 
