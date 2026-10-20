@@ -24,6 +24,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic import ValidationError as PydanticValidationError
+from starlette.routing import Match
 
 if TYPE_CHECKING:
     from argparse import Namespace
@@ -281,6 +282,18 @@ def _check_content_headers(headers) -> tuple[int, str] | None:
                 f"request body exceeds {MAX_BODY_BYTES} bytes",
             )
     return None
+
+
+async def _read_capped_body(raw_request: Request) -> bytes | None:
+    """The request body, or None once it passes MAX_BODY_BYTES. Reads the stream with a
+    running cap, so a chunked request with no Content-Length is stopped at the cap rather
+    than buffered whole first."""
+    body = bytearray()
+    async for chunk in raw_request.stream():
+        body += chunk
+        if len(body) > MAX_BODY_BYTES:
+            return None
+    return bytes(body)
 
 
 def _reject_json_constant(token: str) -> None:
@@ -555,6 +568,24 @@ def _error_response_type() -> type:
     return ErrorResponse
 
 
+def _label_logprobs_by_id(top_logprobs) -> dict[int, float]:
+    """`token_id:<n>` entries from a response's top_logprobs, keyed by id."""
+    try:
+        return {int(t.token.split(":", 1)[1]): t.logprob for t in top_logprobs}
+    except (AttributeError, IndexError, ValueError) as e:
+        raise EngineError("the engine returned a malformed label token", 500) from e
+
+
+def _warn_if_speculative(args) -> None:
+    """Every read uses logprob_token_ids, which vLLM crashes on when a speculative-decoding
+    request shares the batch (vllm-project/vllm#42592, fix #44727)."""
+    if getattr(args, "speculative_config", None):
+        _log.warning(
+            "speculative decoding is enabled: decision reads use logprob_token_ids, which can crash "
+            "the engine when a speculative request shares the batch (vllm-project/vllm#42592)"
+        )
+
+
 async def _fetch_label_logprobs(
     chat,
     served_model: str,
@@ -600,11 +631,10 @@ async def _answer_question(
     served_model: str,
     adapter_name: str,
     renderer,
-    reads: asyncio.Semaphore | None = None,
+    reads: asyncio.Semaphore,
 ) -> tuple[str, dict[str, Any], TokenUsage]:
     """Returns (name, jev-shaped answer dict, this question's TokenUsage). `reads` bounds
     the engine reads in flight across one request's questions."""
-    reads = reads or asyncio.Semaphore(MAX_READS_PER_REQUEST)
     if q.type == "choice":
         keys = list(q.criteria)
         # An option without a description is described by its key, as vLLM's native strategy does.
@@ -637,7 +667,7 @@ async def _answer_question(
             top_logprobs = resp.choices[0].logprobs.content[0].top_logprobs
         except (AttributeError, IndexError, TypeError) as e:
             raise EngineError("the engine returned no label logprobs", 500) from e
-        by_id.update({int(t.token.split(":", 1)[1]): t.logprob for t in top_logprobs})
+        by_id.update(_label_logprobs_by_id(top_logprobs))
     missing = [tid for tid in label_ids if tid not in by_id]
     if missing:
         raise EngineError(f"the engine returned no logprob for {len(missing)} option labels", 500)
@@ -841,8 +871,8 @@ async def _handle_systemone(raw_request: Request) -> Response:
         code, msg = header_check
         return _error(HTTPStatus(code), msg)
 
-    body = await raw_request.body()
-    if len(body) > MAX_BODY_BYTES:
+    body = await _read_capped_body(raw_request)
+    if body is None:
         return _error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"request body exceeds {MAX_BODY_BYTES} bytes")
 
     try:
@@ -903,8 +933,8 @@ async def _handle_decisions(raw_request: Request) -> Response:
         code, msg = header_check
         return _openai_error(HTTPStatus(code), msg)
 
-    body = await raw_request.body()
-    if len(body) > MAX_BODY_BYTES:
+    body = await _read_capped_body(raw_request)
+    if body is None:
         return _openai_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"request body exceeds {MAX_BODY_BYTES} bytes")
 
     try:
@@ -958,7 +988,9 @@ async def _handle_decisions(raw_request: Request) -> Response:
 
     return JSONResponse(
         content={
-            "model": state.systemone_served_model,
+            "model": req.model
+            if req.model in getattr(state, "systemone_served_names", ())
+            else state.systemone_served_model,
             "answers": answers,
             "usage": {
                 "input_tokens": usage.input_tokens,
@@ -976,6 +1008,7 @@ async def _handle_decisions(raw_request: Request) -> Response:
 
 
 router = APIRouter()
+_ROUTE_PATHS = ("/v1/systemone", "/v1/decisions")
 
 
 @router.post("/v1/systemone")
@@ -988,6 +1021,13 @@ async def create_decisions(raw_request: Request) -> Response:
     return await _handle_decisions(raw_request)
 
 
+def _route_exists(app: FastAPI, path: str) -> bool:
+    """Whether a POST to `path` already matches a route. Asks the router rather than reading
+    `route.path`, which routers added with include_router (as vLLM does) do not expose."""
+    scope = {"type": "http", "method": "POST", "path": path, "root_path": "", "headers": []}
+    return any(route.matches(scope)[0] == Match.FULL for route in app.routes)
+
+
 class SystemOnePlugin:
     """`vllm.endpoint_plugins` entry point (see module docstring). Loaded only when
     `granite_switch_systemone` is in `VLLM_PLUGINS` -- see this repo's README/Dockerfile."""
@@ -996,6 +1036,15 @@ class SystemOnePlugin:
     required_tasks: tuple[str, ...] | None = ("generate",)
 
     def attach_router(self, app: FastAPI) -> None:
+        # vLLM now ships /v1/systemone and /v1/decisions itself. Whichever is registered
+        # first would answer and the other would be shadowed silently, with different
+        # wire details, so refuse to start instead.
+        taken = sorted(path for path in _ROUTE_PATHS if _route_exists(app, path))
+        if taken:
+            raise RuntimeError(
+                f"granite_switch_systemone would shadow routes already registered by vLLM: {', '.join(taken)}. "
+                "Remove it from VLLM_PLUGINS, or use vLLM's own endpoints."
+            )
         app.include_router(router)
 
     async def init_state(self, engine_client: EngineClient | None, state: State, args: Namespace) -> None:
@@ -1006,7 +1055,9 @@ class SystemOnePlugin:
         state.systemone_chat = chat
         state.systemone_tokenizer = chat.renderer.tokenizer
         state.systemone_max_model_len = chat.model_config.max_model_len
-        state.systemone_served_model = args.served_model_name[0] if args.served_model_name else args.model
+        state.systemone_served_names = list(args.served_model_name or [args.model])
+        state.systemone_served_model = state.systemone_served_names[0]
+        _warn_if_speculative(args)
         # A bad adapter name or renderer must stop the server, not serve wrong answers.
         state.systemone_adapter_name = _resolve_adapter_name(chat)
         state.systemone_renderer = _load_renderer()

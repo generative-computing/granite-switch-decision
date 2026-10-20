@@ -60,6 +60,10 @@ the sample differs from IBM's, so it does not show the serving path is identical
 
 ## Known gaps
 
+- **Speculative decoding is untested and may crash the engine.** Decision reads use
+  `logprob_token_ids`; vLLM issue #42592 (fix #44727, open) crashes on that whenever a
+  speculative-decoding request shares the batch. We have not run MTP, so whether the decision
+  route is hit is unverified; the plugin warns at startup when `speculative_config` is set.
 - **Decision load slows chat.** Chat p50 for a 32-token reply went from 235 ms idle to
   1,088 ms with 128 concurrent decision clients and no cap. With
   `SYSTEMONE_MAX_CONCURRENT_REQUESTS=8` and 32 clients it was 362 ms, the excess decision
