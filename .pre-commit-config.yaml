@@ -29,9 +29,9 @@ repos:
         language: system
         files: ^(src|tests|scripts)/.*\.py$
 
-      - id: check-dco
-        name: Check DCO sign-off
-        entry: python3 ci/check_dco.py
+      - id: dco-check
+        name: DCO sign-off check
+        entry: "bash -c 'git rev-parse -q --verify MERGE_HEAD >/dev/null && exit 0; grep -q \"^Signed-off-by: \" \"$1\" || { echo \"Missing Signed-off-by trailer. Use: git commit -s\"; exit 1; }' --"
         language: system
         stages: [commit-msg]
 

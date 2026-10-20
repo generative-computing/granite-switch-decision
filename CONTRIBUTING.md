@@ -48,11 +48,17 @@ git config user.name "Jane Doe"
 git config user.email "jane.doe@example.com"
 ```
 
-Use your real name and a reachable email. If you forgot it on your last commit, amend it:
+Use your real name and a reachable email. PRs with unsigned commits are blocked by the
+DCO check until every commit is signed off. To sign off the last commit, amend it:
 
 ```bash
 git commit --amend -s --no-edit
 ```
+
+To sign off several commits, use `git rebase --signoff <base>` and force-push.
+
+The repo's pre-commit config also runs a local DCO check at `commit-msg` time, so
+unsigned commits fail before they are pushed.
 
 ## Contribution Guidelines
 
