@@ -142,8 +142,9 @@ equivalent questions and return the same probabilities.
 - **Not provided.** Authentication (use vLLM's `--api-key`, which covers these routes),
   rate limiting, and `refusal` answers. Engine reads are not bit-identical between
   batched and solo requests, so repeated calls can differ in the third decimal place.
-- **vLLM 0.32+** mounts its own `/v1/systemone` and `/v1/decisions`, which do not know
-  Switch adapters; granite-switch 0.1.1 does not support those versions yet.
+- **vLLM 0.32** mounts its own `/v1/systemone` (newer versions add `/v1/decisions`);
+  neither knows Switch adapters, and granite-switch 0.1.1 does not support those
+  versions yet.
 
 ## Testing
 
