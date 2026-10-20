@@ -20,10 +20,9 @@ environment and runs the same suite against the installed package, and runs
 (the same scanner the pre-commit hook runs on staged files).
 
 **What CI deliberately does not cover:** anything needing a GPU, a checkpoint or a
-live server. Those run as manually initiated checks — the tokenizer test, the
-live-server batteries and the load probes below — because the model deployments
-they need are not reproducible in a CI runner. The initiation commands for each are
-in the two Manual sections that follow, and the results of each run are recorded in
+live server. Those run by hand (the tokenizer test, the live-server batteries and the load
+probes below) because a CI runner cannot reproduce the model deployments they need.
+The commands are in the two Manual sections that follow, and results are recorded in
 [STATUS.md](STATUS.md). Locally, `pre-commit run --all-files` (after
 `pre-commit install`) runs the same lint, header, DCO and secret checks the CI runs;
 it needs `gitleaks` on `PATH` for the last of those.

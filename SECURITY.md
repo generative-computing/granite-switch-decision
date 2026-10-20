@@ -2,13 +2,9 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in granite-switch-systemone, please report it
-responsibly.
-
-**Do not open a public GitHub issue for security vulnerabilities.**
-
-Instead, please report security issues by emailing the maintainers directly or through
-GitHub's private vulnerability reporting feature.
+Report vulnerabilities through GitHub's private vulnerability reporting (the
+**Report a vulnerability** button under this repository's **Security** tab). Please do
+not open a public issue.
 
 ## Supported Versions
 
@@ -22,14 +18,8 @@ server alongside `/v1/chat/completions`. When deploying it:
 - **Authentication**: the plugin deliberately provides none of its own; use vLLM's
   `--api-key`, which covers these routes too, whenever the server is reachable by
   anyone you do not fully trust
-- **Model access**: ensure proper access controls around the serving checkpoint and
-  the machine it runs on
+- **Model access**: restrict who can read the checkpoint and log in to the serving machine
 - **Caller text is untrusted input**: the plugin escapes it against prompt injection,
   but a decision adapter's probabilities are a prior, not an authorisation decision
 - **Dependencies**: keep vLLM and the surrounding stack updated to receive security
   patches
-
-## Responsible Disclosure
-
-We appreciate your efforts to responsibly disclose your findings and will make every
-effort to acknowledge your contributions.

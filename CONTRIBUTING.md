@@ -1,7 +1,5 @@
 # Contributing to granite-switch-systemone
 
-Thank you for your interest in contributing!
-
 ## Getting Started
 
 1. Fork the repository
@@ -15,7 +13,7 @@ Thank you for your interest in contributing!
 
    The unit and spec tests need no GPU. Two of them fetch pinned third-party material
    on first run (OpenAI's OpenAPI schema; TypeSafe's wire models come from the
-   `typesafe-sdk` dev dependency) and skip with a message when offline — see
+   `typesafe-sdk` dev dependency) and skip with a message when offline. See
    [docs/TESTING.md](docs/TESTING.md) for what each test covers and how to run the
    live-server checks.
 
@@ -23,8 +21,9 @@ Thank you for your interest in contributing!
 4. Check formatting, lint and tests before opening a pull request:
 
    ```bash
-   ruff format --check src tests scripts
-   ruff check src tests scripts
+   ruff format --check src tests scripts ci examples
+   ruff check src tests scripts ci examples
+   ty check src
    pytest
    ```
 
@@ -34,9 +33,9 @@ Thank you for your interest in contributing!
 
 Every commit must carry a Developer Certificate of Origin sign-off. By adding a
 sign-off you certify that you wrote the change (or otherwise have the right to submit
-it) under the project's licence — see the
-[full DCO text](https://developercertificate.org/). A sign-off is just a trailer line
-at the end of the commit message:
+it) under the project's licence (the
+[full DCO text](https://developercertificate.org/)). A sign-off is a trailer line at the
+end of the commit message:
 
 ```
 Signed-off-by: Jane Doe <jane.doe@example.com>
@@ -49,8 +48,7 @@ git config user.name "Jane Doe"
 git config user.email "jane.doe@example.com"
 ```
 
-The name and email must match the values you sign off with — a real name and a
-reachable email are expected. Forgot it on your last commit? Amend it:
+Use your real name and a reachable email. If you forgot it on your last commit, amend it:
 
 ```bash
 git commit --amend -s --no-edit
@@ -60,23 +58,17 @@ git commit --amend -s --no-edit
 
 - Keep changes surgical: touch only what the change needs, and match the existing
   style even where you would do it differently
-- New behaviour needs a test — [docs/TESTING.md](docs/TESTING.md) records what every
+- New behaviour needs a test. [docs/TESTING.md](docs/TESTING.md) records what each
   existing test covers
 - Wire-format behaviour is pinned against the published OpenAI and TypeSafe schemas;
   if you change a route's shape, update the spec tests and the deliberate-exceptions
   list in the README together
-
-## Areas of Interest
-
-- **Bug fixes** — the wire formats and their edge cases
-- **Testing** — more of the live-server battery as reproducible scripts
-- **Documentation** — the README's behaviour and limits sections
 
 ## Code of Conduct
 
 This project follows the [Code of Conduct](CODE_OF_CONDUCT.md). Please read it before
 participating.
 
-## Questions?
+## Questions
 
 Open an issue or start a discussion.

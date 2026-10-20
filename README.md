@@ -25,8 +25,8 @@ docker run -d --gpus all -p 8000:8000 \
     granite-switch-systemone
 ```
 
-The image is `vllm/vllm-openai:v0.30.0` (the default, CUDA 13 tag — its vLLM wheel and
-torch match what granite-switch declares, and are the packages the live tests ran)
+The image is `vllm/vllm-openai:v0.30.0` (the default CUDA 13 tag, whose vLLM wheel and
+torch match what granite-switch declares and are the packages the live tests ran)
 plus `granite-switch[vllm]==0.1.1`, `transformers==5.17.0` and this plugin. Weights are
 not baked in: mount a downloaded checkpoint at `/repository`, or set `MODEL_DIR`.
 No image is published. The image builds (amd64, plain and `WITH_ASR=1`); serving from
@@ -40,7 +40,7 @@ Prerequisites:
 - Python 3.11+, PyTorch 2.11+ (granite-switch requires it; CUDA 13 builds tested).
 - vLLM 0.26 to 0.30. That range comes from granite-switch 0.1.1, which pins
   `vllm>=0.26,<0.31`; this plugin's vLLM APIs are present across all of it. Every
-  line in the range has now been served live with the full battery (see
+  line in the range has been served live with the full battery (see
   [docs/STATUS.md](docs/STATUS.md)).
 
 ```bash

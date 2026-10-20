@@ -2,7 +2,7 @@
 
 The plugin serves OpenAI's Decisions wire format (`POST /v1/decisions`) alongside
 `/v1/systemone`, over the same engine and the same decision adapter. Anything written
-against OpenAI's Decisions API — the official SDKs, pydantic-ai, plain HTTP — works
+against OpenAI's Decisions API (the official SDKs, pydantic-ai, plain HTTP) works
 against this server by changing `base_url` only.
 
 ## curl
@@ -149,6 +149,6 @@ curl http://localhost:8000/v1/systemone \
   `levels` ↔ score `criteria`.
 - Choice values typed `string | boolean` are coerced to their text form; mixing boolean
   `true` with the string `"true"` is rejected (the model cannot distinguish them).
-- Image `input` parts are rejected with a 400 — text decision adapter.
+- Image `input` parts are rejected with a 400, because the decision adapter is text-only.
 - Errors use OpenAI's `{"error": {"message", "type", "param", "code"}}` shape.
 - `usage` reports input/output/total tokens, without OpenAI's `*_details` breakdowns.

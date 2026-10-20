@@ -41,9 +41,8 @@ and `ibm-granite/granite-switch-4.1-8b` unless a row names another checkpoint.
   adapters (`citations`, `query_rewrite`, `query_clarification`, `hallucination_detection`,
   `answerability`, `factuality-detection`, `policy-guardrails`, `factuality-correction`,
   `guardian-core`, `uncertainty`, `requirement-check`, `context-attribution`), none named
-  `decision`, so this plugin refuses to start on it — by design, a decisions server needs
-  the decision adapter. No servable 3b exists; the 8b and 30b are the servable released
-  checkpoints.
+  `decision`, so this plugin refuses to start on it. No servable 3b exists; the 8b and
+  30b are the released checkpoints this plugin can serve.
 - **The full 262,144-token danger-zone cap.** The cap clamps to `--max-model-len`, and
   every released Switch checkpoint tops out at 131,072 tokens of context; the header path
   is exercised to 131,072 (see the long-contexts row above).
@@ -52,11 +51,12 @@ Decision Index caveats: IBM's exact 1,068 fast-subset rows are unpublished, so t
 uses the kit's own stratified sample of the same size (the card itself reports ~0.6
 points of serving-path noise on identical rows); the kit's rebuilt release-v1 rows
 differ in bytes from the lab's pinned file (per-benchmark counts match; the added and
-GSM8K rows are byte-identical) — a known kit condition also hit by other public runs,
+GSM8K rows are byte-identical), a known kit condition also hit by other public runs,
 worked around by running the v2 cut on the rebuilt rows; and 4 sample rows over 64k
 tokens are rejected by the documented default caps (scored as wrong by the kit's rules).
 With those caveats the two checkpoints land 2.8 and 1.5 points under their card scores,
-with every area within ±8 — the serving path is faithful to the published numbers.
+with every area within ±8. That is close to the published numbers but not a match, and
+the sample differs from IBM's, so it does not show the serving path is identical.
 
 ## Known gaps
 
@@ -66,6 +66,6 @@ with every area within ±8 — the serving path is faithful to the published num
   requests getting 503s. The cap is off by default, and there is no priority between the
   two kinds of traffic.
 - **No system prompt by default.** The model card's published score used one; this plugin
-  omits it so decisions can share the prefix cache with chat. Our comparisons found it
-  raises accuracy on rating (`score`) questions. `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1`
+  omits it so decisions can share the prefix cache with chat. In our comparisons it
+  raised accuracy on rating (`score`) questions. `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1`
   turns it on (tested live); the default stays off until the trade-off is confirmed.
