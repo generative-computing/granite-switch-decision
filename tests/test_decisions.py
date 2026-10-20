@@ -10,6 +10,8 @@ engine call itself needs a running server (tests/test_decisions_e2e.py, env-gate
   python3 -m pytest tests/test_decisions.py -v -s --tb=short
 """
 
+import asyncio
+
 import pytest
 from pydantic import ValidationError
 
@@ -465,3 +467,116 @@ def test_full_limiter_returns_503_on_both_routes(client):
     assert resp.status_code == 503 and resp.json()["error"]["type"] == "server_error"
     resp = client.post("/v1/systemone", json={"model": "m", "state": "x", "questions": {"q": {"type": "noul"}}})
     assert resp.status_code == 503 and resp.json()["error"]["code"] == 503
+
+
+# --------------------------------------------------------------------------------------------
+# Hardening found in review: chunked bodies, route collisions, model echo, malformed tokens
+# --------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", ["/v1/decisions", "/v1/systemone"])
+def test_chunked_body_over_cap_is_rejected_without_buffering_it(client, monkeypatch, path):
+    """No Content-Length (chunked): the cap must stop the read, not run after it. Drives the
+    ASGI app directly because TestClient buffers the whole body before the app sees it."""
+    monkeypatch.setattr(sp, "MAX_BODY_BYTES", 1024)
+    received = []
+    sent = []
+
+    async def receive():
+        received.append(1)
+        if len(received) > 100:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.request", "body": b" " * 512, "more_body": True}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": path,
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"content-type", b"application/json")],
+        "app": client.app,
+    }
+    asyncio.run(client.app(scope, receive, send))
+    status = next(m["status"] for m in sent if m["type"] == "http.response.start")
+    assert status == 413
+    assert len(received) < 10, f"read {len(received)} chunks of a 1 KiB cap"
+
+
+def test_attach_router_refuses_to_shadow_existing_routes():
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    @app.post("/v1/decisions")
+    async def upstream():  # stands in for vLLM's own endpoint
+        return {}
+
+    with pytest.raises(RuntimeError, match="/v1/decisions"):
+        sp.SystemOnePlugin().attach_router(app)
+
+
+def test_attach_router_sees_routes_added_through_include_router():
+    """vLLM mounts its endpoints with include_router, which hides `route.path`."""
+    from fastapi import APIRouter, FastAPI
+
+    upstream = APIRouter()
+
+    @upstream.post("/v1/systemone")
+    async def theirs():
+        return {}
+
+    app = FastAPI()
+    app.include_router(upstream)
+    with pytest.raises(RuntimeError, match="/v1/systemone"):
+        sp.SystemOnePlugin().attach_router(app)
+
+
+def test_attach_router_on_a_clean_app_mounts_both_routes():
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    sp.SystemOnePlugin().attach_router(app)
+    assert sp._route_exists(app, "/v1/decisions") and sp._route_exists(app, "/v1/systemone")
+
+
+def test_response_echoes_the_requested_model_alias(client):
+    client.app.state.systemone_served_names = ["granite-switch", "alias-two"]
+    resp = client.post(
+        "/v1/decisions",
+        json={
+            "model": "alias-two",
+            "input": "x",
+            "questions": [{"type": "predicate", "name": "p", "instructions": "ok?"}],
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["model"] == "alias-two"
+
+
+def test_malformed_label_token_is_an_engine_error_not_a_crash():
+    class _T:
+        def __init__(self, token):
+            self.token, self.logprob = token, -1.0
+
+    with pytest.raises(sp.EngineError):
+        sp._label_logprobs_by_id([_T("not-a-token-id")])
+
+
+def test_speculative_decoding_is_warned_about(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        sp._warn_if_speculative(type("A", (), {"speculative_config": {"method": "mtp"}})())
+    assert "speculative" in caplog.text.lower()
+
+
+def test_no_warning_without_speculative_decoding(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        sp._warn_if_speculative(type("A", (), {"speculative_config": None})())
+    assert caplog.text == ""

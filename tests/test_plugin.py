@@ -477,7 +477,9 @@ def test_answer_question_counts_every_chunk_of_a_chunked_prompt(
     q = sp.Question(type="choice", instructions="Which?", criteria=criteria)
     renderer = lambda tok, state, instructions, descs: ([], list(range(1000, 1000 + len(descs))))  # noqa: E731
 
-    _, answer, usage = asyncio.run(sp._answer_question("q", q, "state", None, None, "m", "decision", renderer))
+    _, answer, usage = asyncio.run(
+        sp._answer_question("q", q, "state", None, None, "m", "decision", renderer, asyncio.Semaphore(8))
+    )
 
     assert len(calls) == 2
     assert answer["type"] == "choice"
@@ -578,7 +580,7 @@ def test_choice_without_descriptions_renders_its_option_keys(monkeypatch):
 
     monkeypatch.setattr(sp, "_fetch_label_logprobs", fake_fetch)
     q = sp.Question(type="choice", instructions="Which?", criteria={"refund request": None, "login": "Login problems"})
-    asyncio.run(sp._answer_question("q", q, "state", None, None, "m", "decision", renderer))
+    asyncio.run(sp._answer_question("q", q, "state", None, None, "m", "decision", renderer, asyncio.Semaphore(8)))
     assert seen["descs"] == ["refund request", "Login problems"]
 
 
@@ -701,7 +703,7 @@ def test_missing_label_logprob_is_an_engine_error(monkeypatch):
     q = sp.Question(type="noul", instructions="q?")
     renderer = lambda tok, state, instructions, descs: ([], [1, 2])  # noqa: E731
     with pytest.raises(sp.EngineError, match="no logprob"):
-        asyncio.run(sp._answer_question("q", q, "s", None, None, "m", "decision", renderer))
+        asyncio.run(sp._answer_question("q", q, "s", None, None, "m", "decision", renderer, asyncio.Semaphore(8)))
 
 
 def test_a_failing_label_chunk_cancels_its_sibling(monkeypatch):
@@ -722,7 +724,7 @@ def test_a_failing_label_chunk_cancels_its_sibling(monkeypatch):
 
     async def run():
         with pytest.raises(sp.EngineError):
-            await sp._answer_question("q", q, "s", None, None, "m", "decision", renderer)
+            await sp._answer_question("q", q, "s", None, None, "m", "decision", renderer, asyncio.Semaphore(8))
         return sibling["task"].done()
 
     assert asyncio.run(run())

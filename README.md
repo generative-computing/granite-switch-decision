@@ -107,8 +107,28 @@ vLLM's key check is app-wide middleware that rejects any request under `/v1` wit
 `Authorization: Bearer <key>` (it reads `vllm/entrypoints/serve/middleware/authenticate.py`
 in v0.30.0), so it covers `/v1/decisions` and `/v1/systemone`; `/health` stays open.
 Not run against a live server here: after enabling it, confirm an unauthenticated `curl`
-to `/v1/decisions` returns 401. Request size limits are under Behaviour and limits, and `SYSTEMONE_MAX_CONCURRENT_REQUESTS`
-caps load from decision traffic.
+to `/v1/decisions` returns 401. Request size limits are under Behaviour and limits. Set `SYSTEMONE_MAX_CONCURRENT_REQUESTS`
+(for example 8 to 32) on a server shared with chat: it is off by default, and uncapped decision
+bursts slowed chat p50 from 235 ms to 1,088 ms in our load test (see docs/STATUS.md).
+
+## Upstream status
+
+vLLM now has its own `/v1/systemone` ([#59299](https://github.com/vllm-project/vllm/pull/59299),
+merged 2026-10-08) and `/v1/decisions` ([#60465](https://github.com/vllm-project/vllm/pull/60465),
+merged 2026-10-13). Both are on `main` after 0.30.0, so the next vLLM release will carry them.
+This package is for vLLM 0.26 to 0.30, where they are absent, and it stops being needed when
+you move to a release that has them. The upstream endpoints differ from this plugin in wire
+details (this one follows jev's format and OpenAI's schema as published).
+
+The plugin refuses to start if either path is already registered, so running it on a vLLM
+that has the upstream endpoints fails at startup instead of silently picking one. Remove
+`granite_switch_systemone` from `VLLM_PLUGINS` there.
+
+Still open upstream: native Granite Switch support
+([#60232](https://github.com/vllm-project/vllm/pull/60232)) and modular read strategies
+([RFC #59365](https://github.com/vllm-project/vllm/issues/59365)). If the RFC lands, the
+natural migration is a Granite Switch read strategy; `renderer.render(tok, state,
+instructions, descs) -> (messages, label_ids)` is already close to what a strategy needs.
 
 ## Server flags
 
@@ -190,6 +210,14 @@ equivalent questions and return the same probabilities.
   `TypeSafe-Danger-Zone-Long-Context: true` on `/v1/systemone`), capped by
   `--max-model-len`. Bodies over 32 MiB, nesting deeper than 64 and non-finite numbers
   are rejected.
+- **Usage.** A `choice` with more than 128 options runs as several engine requests over the same
+  prompt (128 labels each, so two requests at most), and `usage.input_tokens` counts the prompt
+  once per request, so such a question reports about twice its prompt length. `cached_tokens` shows how much was shared.
+- **Speculative decoding.** Every decision read passes `logprob_token_ids`, which vLLM crashes on
+  when a speculative-decoding request shares the batch
+  ([vllm#42592](https://github.com/vllm-project/vllm/issues/42592), fix
+  [#44727](https://github.com/vllm-project/vllm/pull/44727) open). The plugin logs a warning at
+  startup if `speculative_config` is set. We have not tested this combination.
 - **Cancellation.** A client that disconnects cancels its request's engine work.
 - **Errors.** `/v1/decisions` uses OpenAI's error shape, `/v1/systemone` uses jev's
   `HTTPValidationError` for 422s. Engine errors keep vLLM's status code.
