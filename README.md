@@ -16,14 +16,43 @@ the tests is in [docs/TESTING.md](docs/TESTING.md).
 
 ## Install
 
+`v0.1.0` is the current release. Pick one path:
+
+- **You already run vLLM:** install the plugin into that environment, below. This is the path tested most.
+- **You want a container:** build the image from this repository, further below.
+
+### Into an existing vLLM environment (simplest)
+
+Prerequisites:
+
+- Linux with an NVIDIA GPU; the 8b fits on one 80 GB H100.
+- Python 3.11+, PyTorch 2.11+ (granite-switch requires it; CUDA 13 builds tested).
+- vLLM 0.26 to 0.30. That range comes from granite-switch 0.1.1, which pins
+  `vllm>=0.26,<0.31`; this plugin's vLLM APIs are present across all of it. Every
+  line in the range has been served live with the full battery (see
+  [docs/STATUS.md](docs/STATUS.md)).
+
+```bash
+pip install "granite-switch[vllm]==0.1.1" "transformers>=5.16"
+pip install "git+https://github.com/generative-computing/granite-switch-systemone@v0.1.0"
+export VLLM_PLUGINS=register_granite_switch,granite_switch_systemone
+export SYSTEMONE_INVOCATION_MARKER="### DECISION"
+vllm serve ibm-granite/granite-switch-4.1-8b --served-model-name granite-switch \
+    --dtype bfloat16 --attention-config.flash_attn_version=2 --enable-prompt-tokens-details
+```
+
+`VLLM_PLUGINS` must name both plugins. vLLM loads endpoint plugins only when they are
+listed, and once the variable is set it loads nothing else, so leaving out
+`register_granite_switch` stops the Switch model class from registering.
+
 ### Docker
 
 No image is published, so you build it yourself (it is large, about 30 GB). On a Linux host
 with an NVIDIA GPU, the NVIDIA container toolkit and Docker:
 
 ```bash
-# 1. Get the code (pin a release tag once one exists, for a reproducible build)
-git clone https://github.com/generative-computing/granite-switch-systemone
+# 1. Get the code at a release tag
+git clone --branch v0.1.0 https://github.com/generative-computing/granite-switch-systemone
 cd granite-switch-systemone
 
 # 2. Download the checkpoint (public, not gated; about 18 GB)
@@ -47,30 +76,6 @@ not baked in: mount a downloaded checkpoint at `/repository`, or set `MODEL_DIR`
 The image builds (amd64, plain and `WITH_ASR=1`); serving from it on a GPU host is not
 yet tested (see [docs/STATUS.md](docs/STATUS.md)), so treat the first run as the test and
 report what you find.
-
-### Into an existing vLLM environment
-
-Prerequisites:
-
-- Linux with an NVIDIA GPU; the 8b fits on one 80 GB H100.
-- Python 3.11+, PyTorch 2.11+ (granite-switch requires it; CUDA 13 builds tested).
-- vLLM 0.26 to 0.30. That range comes from granite-switch 0.1.1, which pins
-  `vllm>=0.26,<0.31`; this plugin's vLLM APIs are present across all of it. Every
-  line in the range has been served live with the full battery (see
-  [docs/STATUS.md](docs/STATUS.md)).
-
-```bash
-pip install "granite-switch[vllm]==0.1.1" "transformers>=5.16"
-pip install git+https://github.com/generative-computing/granite-switch-systemone
-export VLLM_PLUGINS=register_granite_switch,granite_switch_systemone
-export SYSTEMONE_INVOCATION_MARKER="### DECISION"
-vllm serve ibm-granite/granite-switch-4.1-8b --served-model-name granite-switch \
-    --dtype bfloat16 --attention-config.flash_attn_version=2 --enable-prompt-tokens-details
-```
-
-`VLLM_PLUGINS` must name both plugins. vLLM loads endpoint plugins only when they are
-listed, and once the variable is set it loads nothing else, so leaving out
-`register_granite_switch` stops the Switch model class from registering.
 
 ## Verify the deployment
 
