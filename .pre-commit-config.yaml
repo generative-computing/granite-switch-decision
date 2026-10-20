@@ -1,0 +1,42 @@
+fail_fast: true
+# SPDX/DCO hooks run at their own stages; everything else at pre-commit only.
+default_stages: [pre-commit]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-toml
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff-format
+        args: [--config=pyproject.toml]
+      - id: ruff
+        args: [--exit-non-zero-on-fix, --fix, --config=pyproject.toml]
+
+  - repo: local
+    hooks:
+      - id: check-headers
+        name: Check SPDX headers
+        entry: python3 ci/check_headers.py
+        language: system
+        files: ^(src|tests|scripts)/.*\.py$
+
+      - id: check-dco
+        name: Check DCO sign-off
+        entry: python3 ci/check_dco.py
+        language: system
+        stages: [commit-msg]
+
+  # Needs gitleaks on PATH (brew install gitleaks / apt install gitleaks).
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

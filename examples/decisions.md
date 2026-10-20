@@ -102,12 +102,11 @@ decision = client.decisions.create(
                 {"value": "account", "description": "Login and account access"},
             ],
         },
-        {"type": "predicate", "name": "escalate",
-         "instructions": "Does this need urgent attention?"},
+        {"type": "predicate", "name": "escalate", "instructions": "Does this need urgent attention?"},
     ],
 )
 
-print(decision.answers[0].choice)       # payments
+print(decision.answers[0].choice)  # payments
 print(decision.answers[1].probability)  # 0.89
 ```
 

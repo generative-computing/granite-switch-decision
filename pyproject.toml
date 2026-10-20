@@ -24,7 +24,7 @@ dependencies = []
 # httpx backs fastapi's TestClient for the route-level tests in test_decisions.py;
 # jsonschema validates both routes against published schemas (tests/specs.py); typesafe-sdk
 # (MIT) supplies jev's wire models for the /v1/systemone schema test.
-dev = ["fastapi", "pydantic", "pytest", "ruff", "httpx", "jsonschema", "typesafe-sdk==0.7.5"]
+dev = ["fastapi", "pydantic", "pytest", "ruff==0.17.1", "httpx", "jsonschema", "typesafe-sdk==0.7.5"]
 
 [project.entry-points."vllm.endpoint_plugins"]
 granite_switch_systemone = "granite_switch_systemone.plugin:register"

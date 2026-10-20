@@ -7,9 +7,25 @@ covers and how to run it.
 
 ```bash
 pip install -e ".[dev]"
-ruff format --check src tests scripts && ruff check src tests scripts
+ruff format --check src tests scripts ci && ruff check src tests scripts ci
+python3 ci/check_headers.py
 pytest
 ```
+
+CI also builds the wheel and sdist (`python -m build`), checks that `LICENSE` and
+`THIRD_PARTY_NOTICES.md` ship inside the wheel, installs the wheel into a clean
+environment and runs the same suite against the installed package, and runs
+[gitleaks](https://github.com/gitleaks/gitleaks) over the full history of all refs
+(the same scanner the pre-commit hook runs on staged files).
+
+**What CI deliberately does not cover:** anything needing a GPU, a checkpoint or a
+live server. Those run as manually initiated checks — the tokenizer test, the
+live-server batteries and the load probes below — because the model deployments
+they need are not reproducible in a CI runner. The initiation commands for each are
+in the two Manual sections that follow, and the results of each run are recorded in
+[STATUS.md](STATUS.md). Locally, `pre-commit run --all-files` (after
+`pre-commit install`) runs the same lint, header, DCO and secret checks the CI runs;
+it needs `gitleaks` on `PATH` for the last of those.
 
 - `tests/test_plugin.py`: request validation, body limits, the context guard, chunked
   label reads and their usage counts, adapter-name resolution, the concurrency limiter,
