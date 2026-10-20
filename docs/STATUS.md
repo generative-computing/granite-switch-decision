@@ -29,6 +29,7 @@ and `ibm-granite/granite-switch-4.1-8b` unless a row names another checkpoint.
 | Tensor parallelism | the 8b with `--tensor-parallel-size 2`: the full battery | pass |
 | Long contexts | the 8b with `--max-model-len 131072`, `scripts/longctx_check.py` (9 checks) | 9/9: a 98k-token request answered in one engine read with the danger-zone header and rejected without it; the 131,072 backstop and the default 32k/64k caps enforced; `/v1/decisions` has no header escape |
 | Docker image build | `docker build --platform linux/amd64`, plain and `WITH_ASR=1` variants | both build; the stack inside is package-identical to the live-tested one (PyPI vLLM 0.30.0, torch 2.13.0+cu130, transformers 5.17.0, granite-switch 0.1.1); entry points and imports verified in-container |
+| Model-card Decision Index score | the Decision Index kit's 1,068-row stratified fast subset (edition 0.3, default seed) through `/v1/systemone` on a `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1` server at `--max-model-len 131072`, scored sample-relative with the kit's own chance levels and weights | 8b: 40.1 vs the card's 42.9; 30b: 48.6 vs the card's 50.1; per-area numbers scatter both ways around the card's (see the caveats below) |
 
 ## Not tested
 
@@ -46,12 +47,16 @@ and `ibm-granite/granite-switch-4.1-8b` unless a row names another checkpoint.
 - **The full 262,144-token danger-zone cap.** The cap clamps to `--max-model-len`, and
   every released Switch checkpoint tops out at 131,072 tokens of context; the header path
   is exercised to 131,072 (see the long-contexts row above).
-- **Accuracy against the published benchmark.** The checks above compare the routes
-  with each other and with a system-prompt variant, not with the model card's Decision
-  Index score. A reproduction run through the public Decision Index kit
-  (apolinario/decision-index, edition 0.3, fast subset) is staged but blocked on access
-  to its one gated source dataset (HLE); the model card's 42.9 (8b) and 50.1 (30b) are
-  the numbers to compare against.
+
+Decision Index caveats: IBM's exact 1,068 fast-subset rows are unpublished, so the run
+uses the kit's own stratified sample of the same size (the card itself reports ~0.6
+points of serving-path noise on identical rows); the kit's rebuilt release-v1 rows
+differ in bytes from the lab's pinned file (per-benchmark counts match; the added and
+GSM8K rows are byte-identical) — a known kit condition also hit by other public runs,
+worked around by running the v2 cut on the rebuilt rows; and 4 sample rows over 64k
+tokens are rejected by the documented default caps (scored as wrong by the kit's rules).
+With those caveats the two checkpoints land 2.8 and 1.5 points under their card scores,
+with every area within ±8 — the serving path is faithful to the published numbers.
 
 ## Known gaps
 

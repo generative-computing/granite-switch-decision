@@ -68,4 +68,9 @@ licence. TypeSafe's own `openapi.json` carries no licence and is not used.
 Accuracy was compared on labelled public datasets (BoolQ, SST-5, Banking77): the
 `/v1/decisions` route against the same prompt sent over `/v1/chat/completions`, against
 the layout with the system prompt, and FlashAttention 2 against 3. That harness and its
-results are not published here; STATUS.md says what was compared.
+results are not published here; STATUS.md says what was compared. The Decision Index
+reproduction (kit, suite build, runs and scores) likewise lives outside this repository.
+
+The Decision Index numbers in STATUS.md come from the public reproduction kit
+(`apolinario/decision-index`, MIT) driven against `/v1/systemone` with the model card's
+invocation recipe (`SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1`).
