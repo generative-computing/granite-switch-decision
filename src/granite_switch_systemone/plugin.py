@@ -364,7 +364,7 @@ def _validation_error_response(e: PydanticValidationError) -> JSONResponse:
     """jev's 422 body: pydantic's errors with `loc` rooted at "body", limited to jev's keys."""
     detail = []
     for err in e.errors():
-        item = {"loc": ["body", *err["loc"]], "msg": err["msg"], "type": err["type"]}
+        item: dict[str, Any] = {"loc": ["body", *err["loc"]], "msg": err["msg"], "type": err["type"]}
         if "input" in err:
             item["input"] = err["input"]
         if "ctx" in err:
@@ -493,7 +493,7 @@ def _score_confidence(probs: list[float]) -> float:
     if len(probs) == 1:
         return 1.0
     normalized = _normalize_probs(probs)
-    mode = max(range(len(normalized)), key=normalized.__getitem__)
+    mode = max(range(len(normalized)), key=lambda i: normalized[i])
     distance_from_mode = sum(p * abs(i - mode) for i, p in enumerate(normalized))
     center = (len(normalized) - 1) / 2
     uniform_mean_distance = sum(abs(i - center) for i in range(len(normalized))) / len(normalized)
@@ -647,7 +647,7 @@ async def _answer_question(
     probs = _softmax([by_id[tid] for tid in label_ids])
 
     if q.type == "choice":
-        j = max(range(len(keys)), key=probs.__getitem__)
+        j = max(range(len(keys)), key=lambda i: probs[i])
         answer = {
             "type": "choice",
             "choice": keys[j],
@@ -779,10 +779,12 @@ def _decisions_question_to_internal(question: DecisionQuestion, index: int) -> t
         internal = Question(type="noul", instructions=question.instructions)
         extras: dict[str, Any] = {}
     elif question.type == "choice":
+        assert question.choices is not None  # the validator guarantees it for choice
         criteria = {_choice_key(c.value): c.description for c in question.choices}
         internal = Question(type="choice", instructions=question.instructions, criteria=criteria)
         extras = {"value_map": {_choice_key(c.value): c.value for c in question.choices}}
     else:
+        assert question.levels is not None  # the validator guarantees it for score
         descriptions = [level.description or level.label for level in question.levels]
         internal = Question(type="score", instructions=question.instructions, criteria=descriptions)
         extras = {"labels": [level.label for level in question.levels]}

@@ -7,7 +7,8 @@ covers and how to run it.
 
 ```bash
 pip install -e ".[dev]"
-ruff format --check src tests scripts ci && ruff check src tests scripts ci
+ruff format --check src tests scripts ci examples && ruff check src tests scripts ci examples
+ty check src
 python3 ci/check_headers.py
 pytest
 ```

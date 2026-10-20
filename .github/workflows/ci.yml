@@ -21,6 +21,8 @@ jobs:
         run: ruff format --check src tests scripts ci examples
       - name: ruff check
         run: ruff check src tests scripts ci examples
+      - name: ty check
+        run: ty check src
       - name: SPDX headers
         run: python3 ci/check_headers.py
       - name: pytest

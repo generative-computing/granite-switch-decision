@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 
 PLAIN_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -73,8 +74,8 @@ def escape_special_tokens(text: str, specials: list[str]) -> str:
 
 
 def _specials(tok) -> list[str]:
-    added = getattr(tok, "get_added_vocab", None)
-    return sorted(added(), key=len, reverse=True) if added else []
+    added: Callable[[], dict[str, int]] | None = getattr(tok, "get_added_vocab", None)
+    return sorted(list(added()), key=lambda token: len(token), reverse=True) if added else []
 
 
 def build_label_pool(tok, need: int) -> list[tuple[str, int]]:
