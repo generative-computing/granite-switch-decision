@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: Apache-2.0 AND MIT
 """`/v1/decisions` (OpenAI) and `/v1/systemone` (jev) as vLLM endpoint plugin routes.
 
 Both routes validate their own wire format, translate to one internal question shape and
