@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """No-GPU checks for the /v1/decisions wire format: schema bounds from OpenAI's published
 spec, input flattening, answer mapping -- and, the load-bearing ones, PARITY with
 /v1/systemone: the translation must converge on exactly the internal (state, Question)

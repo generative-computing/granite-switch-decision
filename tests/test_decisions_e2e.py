@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Env-gated end-to-end parity: against a RUNNING server (any deployment of this plugin),
 the same semantic questions through /v1/decisions and /v1/systemone must return the same
 probabilities. Both routes share the engine path by construction (see

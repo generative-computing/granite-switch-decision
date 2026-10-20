@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """No-GPU checks for renderer.py: the one adapter-specific piece plugin.py calls out to.
 
 python3 -m pytest tests/test_renderer.py -v -s --tb=short

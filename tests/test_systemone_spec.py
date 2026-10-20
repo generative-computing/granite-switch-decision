@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Conformance of /v1/systemone to jev's wire format, checked with a JSON Schema validator.
 
 The schemas come from the pydantic models in TypeSafe's MIT-licensed `typesafe-sdk` (see

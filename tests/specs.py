@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Third-party API schemas for the conformance tests, obtained at test time, never committed.
 
 - OpenAI Decisions: `openapi.json` from openai/openai-openapi (MIT, Copyright (c) OpenAI),

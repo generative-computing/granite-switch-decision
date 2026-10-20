@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Token-level prefix sharing between chat completions and this plugin's decision prompts.
 
 vLLM's prefix cache reuses a KV block only when every token up to and including it

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Conformance of /v1/decisions to OpenAI's published OpenAPI schema, checked with a JSON
 Schema validator. The schema is fetched at test time from openai/openai-openapi (MIT) at a
 pinned commit and hash; see tests/specs.py. The test skips, saying how to supply it, when

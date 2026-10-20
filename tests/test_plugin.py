@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """No-GPU checks for plugin.py's validation helpers, renderer resolution, and adapter-name
 resolution. Does NOT touch vLLM or a model -- the actual engine call
 (`_answer_question`/`_fetch_label_logprobs`) needs a running vLLM server and is covered by
