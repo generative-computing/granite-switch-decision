@@ -19,7 +19,8 @@ the tests is in [docs/TESTING.md](docs/TESTING.md).
 `v0.1.0` is the current release. Pick one path:
 
 - **You already run vLLM:** install the plugin into that environment, below. This is the path tested most.
-- **You want a container:** build the image from this repository, further below.
+- **You want a container:** build the image from this repository, further below. It is
+  lightly tested (see the note there), so prefer the first path if you can.
 
 ### Into an existing vLLM environment (simplest)
 
@@ -47,7 +48,7 @@ listed, and once the variable is set it loads nothing else, so leaving out
 
 ### Docker
 
-No image is published, so you build it yourself (it is large, about 30 GB). On a Linux host
+No supported image is published, so you build it yourself (it is large, about 30 GB). On a Linux host
 with an NVIDIA GPU, the NVIDIA container toolkit and Docker:
 
 ```bash
@@ -73,9 +74,11 @@ The image is `vllm/vllm-openai:v0.30.0` (the default CUDA 13 tag, whose vLLM whe
 torch match what granite-switch declares and are the packages the live tests ran)
 plus `granite-switch[vllm]==0.1.1`, `transformers==5.17.0` and this plugin. Weights are
 not baked in: mount a downloaded checkpoint at `/repository`, or set `MODEL_DIR`.
-The image builds (amd64, plain and `WITH_ASR=1`); serving from it on a GPU host is not
-yet tested (see [docs/STATUS.md](docs/STATUS.md)), so treat the first run as the test and
-report what you find.
+
+**Status of the image: lightly tested.** It builds (amd64, plain and `WITH_ASR=1`) and the
+packages and plugin entry points were checked inside it, but it has not been served on a
+GPU host. The pip path above is what the live tests used. If you run the image, treat the
+first start as the test and report what you find (see [docs/STATUS.md](docs/STATUS.md)).
 
 ## Verify the deployment
 
