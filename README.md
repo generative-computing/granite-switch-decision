@@ -18,19 +18,35 @@ the tests is in [docs/TESTING.md](docs/TESTING.md).
 
 ### Docker
 
+No image is published, so you build it yourself (it is large, about 30 GB). On a Linux host
+with an NVIDIA GPU, the NVIDIA container toolkit and Docker:
+
 ```bash
+# 1. Get the code (pin a release tag once one exists, for a reproducible build)
+git clone https://github.com/generative-computing/granite-switch-systemone
+cd granite-switch-systemone
+
+# 2. Download the checkpoint (public, not gated; about 18 GB)
+hf download ibm-granite/granite-switch-4.1-8b --local-dir /srv/models/granite-switch-4.1-8b
+
+# 3. Build and run
 docker build --platform linux/amd64 -t granite-switch-systemone .
-docker run -d --gpus all -p 8000:8000 \
-    -v /path/to/granite-switch-4.1-8b:/repository:ro \
+docker run -d --name gss --gpus all --ipc=host -p 8000:8000 \
+    -v /srv/models/granite-switch-4.1-8b:/repository:ro \
     granite-switch-systemone
 ```
+
+Then check it ([Verify the deployment](#verify-the-deployment)). Model loading takes a few
+minutes; follow it with `docker logs -f gss`. `--ipc=host` is vLLM's standard setting for
+shared memory; it matters most with `--tensor-parallel-size` above 1.
 
 The image is `vllm/vllm-openai:v0.30.0` (the default CUDA 13 tag, whose vLLM wheel and
 torch match what granite-switch declares and are the packages the live tests ran)
 plus `granite-switch[vllm]==0.1.1`, `transformers==5.17.0` and this plugin. Weights are
 not baked in: mount a downloaded checkpoint at `/repository`, or set `MODEL_DIR`.
-No image is published. The image builds (amd64, plain and `WITH_ASR=1`); serving from
-it on a GPU host is not yet tested (see [docs/STATUS.md](docs/STATUS.md)).
+The image builds (amd64, plain and `WITH_ASR=1`); serving from it on a GPU host is not
+yet tested (see [docs/STATUS.md](docs/STATUS.md)), so treat the first run as the test and
+report what you find.
 
 ### Into an existing vLLM environment
 
@@ -55,6 +71,36 @@ vllm serve ibm-granite/granite-switch-4.1-8b --served-model-name granite-switch 
 `VLLM_PLUGINS` must name both plugins. vLLM loads endpoint plugins only when they are
 listed, and once the variable is set it loads nothing else, so leaving out
 `register_granite_switch` stops the Switch model class from registering.
+
+## Verify the deployment
+
+```bash
+curl -fsS http://localhost:8000/health && echo healthy
+curl -fsS http://localhost:8000/v1/models        # lists "granite-switch"
+python3 scripts/e2e_check.py --base-url http://localhost:8000    # needs only the standard library
+```
+
+`e2e_check.py` exits 0 when all its checks pass (wire formats on both routes, route
+parity, chat still working, prefix-cache sharing). Run it from a checkout of this
+repository; it works against any host. If the server exits at startup, the log names
+the cause: an unknown `SYSTEMONE_ADAPTER_NAME`, or a checkpoint with no `decision` adapter.
+
+## Securing the server
+
+The server listens on `0.0.0.0` and, as shipped, requires no authentication on any route.
+Do not expose it directly. Either put it behind a gateway that authenticates callers, or
+add vLLM's `--api-key`, which `serve.sh` passes through:
+
+```bash
+docker run -d --gpus all --ipc=host -p 8000:8000 -v … granite-switch-systemone --api-key "$KEY"
+```
+
+vLLM's key check is app-wide middleware that rejects any request under `/v1` without
+`Authorization: Bearer <key>` (it reads `vllm/entrypoints/serve/middleware/authenticate.py`
+in v0.30.0), so it covers `/v1/decisions` and `/v1/systemone`; `/health` stays open.
+Not run against a live server here: after enabling it, confirm an unauthenticated `curl`
+to `/v1/decisions` returns 401. Request size limits are under Behaviour and limits, and `SYSTEMONE_MAX_CONCURRENT_REQUESTS`
+caps load from decision traffic.
 
 ## Server flags
 
