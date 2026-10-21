@@ -39,11 +39,16 @@ RUN python3 -m pip list --format=freeze | grep -i -E "^(vllm|torch|torchaudio|to
 # baked in as a Hub cache at the revision this image was tested with, without the
 # repo's unused .py files. The server runs with the Hub offline, so a missing/moved file
 # fails startup instead of silently fetching something else.
+# The pinned commit is downloaded by hash, not from `main`, so the build does not change when
+# the model repository moves. A download by commit writes no refs/main, and the offline lookup
+# for the revision "main" reads that file, so it is written here and then checked.
 ARG ASR_MODEL=ibm-granite/granite-speech-5.0-470m-turboctc
 ARG ASR_REVISION=947f59af40db9791170a0628cf0f3f4812d720f1
 RUN if [ "$WITH_ASR" = "1" ]; then \
-        hf download ${ASR_MODEL} --cache-dir /opt/hf-cache --exclude "*.py" > /dev/null \
-        && test "$(cat /opt/hf-cache/models--${ASR_MODEL//\//--}/refs/main)" = "${ASR_REVISION}"; \
+        hf download ${ASR_MODEL} --revision ${ASR_REVISION} --cache-dir /opt/hf-cache --exclude "*.py" > /dev/null \
+        && mkdir -p /opt/hf-cache/models--${ASR_MODEL//\//--}/refs \
+        && printf '%s' "${ASR_REVISION}" > /opt/hf-cache/models--${ASR_MODEL//\//--}/refs/main \
+        && test -d /opt/hf-cache/models--${ASR_MODEL//\//--}/snapshots/${ASR_REVISION}; \
     fi
 ENV HF_HUB_CACHE=/opt/hf-cache HF_HUB_OFFLINE=1
 
