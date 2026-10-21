@@ -79,7 +79,7 @@ def _specials(tok) -> list[str]:
     turn or switch adapters, so they stay intact; splitting them cost 5 to 9 tokens each."""
     added: Callable[[], dict[str, int]] | None = getattr(tok, "get_added_vocab", None)
     structural = [t for t in added() if t.startswith("<|") and t.endswith("|>")] if added else []
-    return sorted(structural, key=len, reverse=True)
+    return sorted(structural, key=lambda token: len(token), reverse=True)
 
 
 def build_label_pool(tok, need: int) -> list[tuple[str, int]]:
