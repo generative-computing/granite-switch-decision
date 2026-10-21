@@ -49,3 +49,7 @@ SOFTWARE.
 - **BoolQ** (https://huggingface.co/datasets/google/boolq, CC BY-SA 3.0, Google) is fetched
   from Hugging Face's datasets server each time `scripts/accuracy_check.py` runs. No rows are
   stored in this repository or shipped in the package.
+- **Decision Index** (https://github.com/apolinario/decision-index, MIT) is a benchmark kit
+  that a user may install and run against a server, as described in `docs/TESTING.md`. It is not
+  part of this repository or the package. The benchmark suite it builds is made from third-party
+  datasets under their own licences and is never stored here.

@@ -99,6 +99,51 @@ on the old deployment and `--compare before.json` on the new one.
   (a wrong layout or marker makes the model want a token outside the labels); otherwise it
   logs at debug level. Answers are never refused on it.
 
+## Optional: a benchmark run with the Decision Index
+
+The [Decision Index](https://github.com/apolinario/decision-index) is a public benchmark for
+typed decision engines. Its `http` engine speaks the `/v1/systemone` wire format, so it can
+drive this plugin as it is. Use it as a broad check that a deployment answers well across
+many kinds of question, or to compare two configurations of the same server (for example the
+system prompt on and off) on the same rows. Nothing from the benchmark is stored in this
+repository: you fetch the kit, build the suite yourself, and run it against your server.
+
+What you need:
+
+- A running server (see [Verify the deployment](../README.md#verify-the-deployment)). Start it
+  with `--max-model-len 131072` if you want the longest rows answered instead of rejected.
+- The kit, which is MIT licensed. Install it and build the suite by following its README
+  ("Quickstart (local)"). The suite is not redistributed, so you rebuild it from public sources
+  (about 7 GB of downloads and 17 GB of working space), and you need a Hugging Face login with
+  the terms of the gated HLE dataset accepted. Check each source's own licence before reusing
+  any of the data.
+- Time. A sample is quick, a full run is not.
+
+Run a sample, then score it (commands as in the kit's README; check them against the version
+you installed):
+
+```bash
+python -m decision_index suite sample --n 1000 --out sample.jsonl.gz
+python -m decision_index run --engine http \
+    --option base_url=http://localhost:8000 --option model=granite-switch \
+    --rows sample.jsonl.gz --out runs/my-server
+```
+
+To compare two servers, run the same `sample.jsonl.gz` against each and compare the scored
+results row by row. A sample is a small fraction of the suite, so differences of a point or
+so between two runs are within sampling noise unless you pair them on the same rows.
+
+Do not read a headline number from `decision_index score` on a sample. It divides by the full
+suite's request counts, so a sampled run comes out far too low (a sample that answered every
+row can score under 5). To get a number comparable with a full run, subclass the kit's `Suite`
+so that `rows()` yields only the sampled rows, and pass that to the kit's `score_run`. Compare
+two runs of the same sample with each other; do not compare a sample's score with a published
+full-run score without allowing for the sampling noise.
+
+Treat the scores as a validation signal for your own deployment. The model card's published
+figures are the reference for the model itself, and a score from this plugin does not by
+itself show that the serving path matches the one that produced them.
+
 ## Third-party schemas
 
 Nothing in this repository is copied from another project's API specification. See
@@ -114,6 +159,6 @@ the layout with the system prompt, and FlashAttention 2 against 3. That harness 
 results are not published here; STATUS.md says what was compared. The Decision Index
 reproduction (kit, suite build, runs and scores) likewise lives outside this repository.
 
-The Decision Index numbers in STATUS.md come from the public reproduction kit
-(`apolinario/decision-index`, MIT) driven against `/v1/systemone` with the model card's
-invocation recipe (`SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1`).
+The Decision Index runs described in STATUS.md use the public reproduction kit
+(`apolinario/decision-index`, MIT) driven against `/v1/systemone`; see the Decision Index
+section above for how to run it yourself.
