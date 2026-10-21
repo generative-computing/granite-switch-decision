@@ -8,6 +8,8 @@
 #   SYSTEMONE_ADAPTER_NAME  default "decision"; SYSTEMONE_INVOCATION_MARKER, see README
 set -e
 MODEL_DIR=${MODEL_DIR:-/repository}
+# Fail early, with the cause, if the checkpoint needs a speech model the offline cache lacks.
+python3 -m granite_switch_systemone.preflight "$MODEL_DIR"
 TP=${TENSOR_PARALLEL_SIZE:-$(python3 -c "import torch; print(max(torch.cuda.device_count(), 1))")}
 export SYSTEMONE_ADAPTER_NAME=${SYSTEMONE_ADAPTER_NAME:-decision}
 # --dtype bfloat16: composed checkpoints carry torch_dtype null (granite-switch#126).

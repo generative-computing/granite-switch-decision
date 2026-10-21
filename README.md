@@ -75,10 +75,26 @@ torch match what granite-switch declares and are the packages the live tests ran
 plus `granite-switch[vllm]==0.1.1`, `transformers==5.17.0` and this plugin. Weights are
 not baked in: mount a downloaded checkpoint at `/repository`, or set `MODEL_DIR`.
 
+**Speech model.** The 8b and 30b checkpoints enable speech input and name no speech model, so
+Granite Switch falls back to a default one (`ibm-granite/granite-speech-5.0-470m-turboctc`).
+The image runs with the Hub offline, so that model must already be in its cache. The plain
+build does not include it, and a server started from it with these checkpoints stops during
+startup. Build with `--build-arg WITH_ASR=1`, which bakes the model in:
+
+```bash
+docker build --platform linux/amd64 --build-arg WITH_ASR=1 -t granite-switch-systemone:asr .
+```
+
+Alternatively mount a cache that holds the model and set `HF_HUB_CACHE` to it, or set
+`HF_HUB_OFFLINE=0` so it downloads at startup. `serve.sh` checks this before starting vLLM and
+says which of these to do.
+
 **Status of the image: lightly tested.** It builds (amd64, plain and `WITH_ASR=1`) and the
-packages and plugin entry points were checked inside it, but it has not been served on a
-GPU host. The pip path above is what the live tests used. If you run the image, treat the
-first start as the test and report what you find (see [docs/STATUS.md](docs/STATUS.md)).
+packages and plugin entry points were checked inside it. The plain build was served on one
+H100 with the speech model supplied through a mounted cache, and the wire, robustness and
+accuracy checks passed; see [docs/STATUS.md](docs/STATUS.md) for what was and was not run. The
+pip path above is what most of the live tests used. If you run the image, treat the first
+start as the test and report what you find.
 
 ## Verify the deployment
 
