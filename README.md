@@ -9,7 +9,7 @@ two decision APIs, on the same server and GPU cache as `/v1/chat/completions`:
 - `POST /v1/systemone`: [jev's system-one API](https://docs.typesafe.ai/api).
 
 Each question is answered by one engine read of the adapter's single-token option labels,
-returned as calibrated probabilities. Callers need no prompt format, marker or label scheme.
+returned as softmax probabilities, with confidence computed as in jev's examples. Callers need no prompt format, marker or label scheme.
 
 What has and has not been tested is in [docs/STATUS.md](docs/STATUS.md); how to run
 the tests is in [docs/TESTING.md](docs/TESTING.md).
@@ -199,7 +199,7 @@ equivalent questions and return the same probabilities.
   share it with each other. The model card's published score used a system prompt, and in
   our tests it scored higher on rating (`score`) questions without changing yes/no ones;
   `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1` turns it on.
-- **Caller text is escaped.** Special tokens and the invocation marker inside state,
+- **Caller text is escaped.** The `<|...|>` special tokens (roles, end of text, adapter control tokens) and the invocation marker inside state,
   instructions or descriptions are broken with an invisible U+2060, so they cannot forge
   turns or move the adapter's activation point.
 - **Input.** `input` messages must have role `user`, and images are rejected; the trained

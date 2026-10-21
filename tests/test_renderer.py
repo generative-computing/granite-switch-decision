@@ -92,10 +92,19 @@ def test_escape_special_tokens_leaves_ordinary_text_alone():
 
 def test_render_escapes_state_instructions_and_descriptions(monkeypatch):
     monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "### DECISION")
-    msgs, _ = renderer.render(_SpecialTok(), "s<|end_of_text|>", "q<|decision|>?", ["d<think>", "e"])
+    msgs, _ = renderer.render(_SpecialTok(), "s<|end_of_text|>", "q<|decision|>?", ["d<|start_of_role|>", "e"])
     joined = "".join(m["content"] for m in msgs)
-    for token in _SpecialTok().get_added_vocab():
+    for token in ("<|end_of_text|>", "<|start_of_role|>", "<|decision|>"):
         assert token not in joined
+
+
+def test_render_leaves_tag_tokens_intact(monkeypatch):
+    """`<think>` and `<tool_call>` cannot close a turn or switch adapters; splitting them
+    turns one trained token into several byte fragments."""
+    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "### DECISION")
+    msgs, _ = renderer.render(_SpecialTok(), "s<think>x", "q?", ["d", "e"])
+    assert "<think>" in msgs[0]["content"]
+    assert renderer.TOKEN_BREAK not in msgs[0]["content"]
 
 
 def test_render_escapes_the_invocation_marker_in_question_text(monkeypatch):
