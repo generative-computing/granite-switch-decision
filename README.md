@@ -86,12 +86,14 @@ first start as the test and report what you find (see [docs/STATUS.md](docs/STAT
 curl -fsS http://localhost:8000/health && echo healthy
 curl -fsS http://localhost:8000/v1/models        # lists "granite-switch"
 python3 scripts/e2e_check.py --base-url http://localhost:8000    # needs only the standard library
+python3 scripts/accuracy_check.py --base-url http://localhost:8000   # answers are still good (needs internet)
 ```
 
 `e2e_check.py` exits 0 when all its checks pass (wire formats on both routes, route
 parity, chat still working, prefix-cache sharing). Run it from a checkout of this
 repository; it works against any host. If the server exits at startup, the log names
-the cause: an unknown `SYSTEMONE_ADAPTER_NAME`, or a checkpoint with no `decision` adapter.
+the cause: an unknown `SYSTEMONE_ADAPTER_NAME`, a checkpoint with no `decision` adapter, or an
+invocation marker the chat template does not activate the adapter on (checked at startup).
 
 ## Securing the server
 

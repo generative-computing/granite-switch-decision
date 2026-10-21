@@ -46,3 +46,6 @@ SOFTWARE.
   installed, not copied.
 - **TypeSafe's API specification** (https://api.typesafe.ai/openapi.json) carries no licence.
   It is not used, downloaded or included.
+- **BoolQ** (https://huggingface.co/datasets/google/boolq, CC BY-SA 3.0, Google) is fetched
+  from Hugging Face's datasets server each time `scripts/accuracy_check.py` runs. No rows are
+  stored in this repository or shipped in the package.

@@ -45,7 +45,9 @@ it needs `gitleaks` on `PATH` for the last of those.
   score levels (at most 10), which are checked against the plugin's own limits.
   Without `typesafe-sdk` the test skips and says what to install.
 - `tests/test_renderer.py`: prompt layout, label pool, special-token and marker
-  escaping, the experimental system prompt switch.
+  escaping (only the `<|...|>` tokens and the marker are escaped; tag tokens such as
+  `<think>` stay whole), the experimental system prompt switch.
+- `tests/test_plugin.py` also covers the startup activation probe and the label-mass log.
 
 ## Manual: needs the checkpoint's tokenizer, no GPU
 
@@ -56,7 +58,9 @@ SYSTEMONE_TOKENIZER=ibm-granite/granite-switch-4.1-8b pytest tests/test_prefix_s
 
 `tests/test_prefix_sharing.py` renders the real prompt with the checkpoint's tokenizer
 and chat template and counts which 16-token prefix-cache blocks a decision can share with
-other requests. It is skipped in CI because it downloads the tokenizer.
+other requests. It also checks that escaping leaves the template's own role and control
+tokens alone, and that the startup activation probe accepts the real chat template and
+refuses a wrong marker. It is skipped in CI because it downloads the tokenizer.
 
 ## Manual: needs a running server
 
@@ -71,7 +75,31 @@ Python standard library unless noted.
 | `python3 scripts/probe_check.py --base-url URL --max-concurrent N` | Adds the concurrency limit: a burst against `SYSTEMONE_MAX_CONCURRENT_REQUESTS=N` gets 200s and 503s. |
 | `python3 scripts/probe_check.py --base-url URL --load 30` | Adds a load test at 1, 8 and 32 clients with chat latency alongside. Reported, not asserted. |
 | `python3 scripts/longctx_check.py --base-url URL --tokenizer /path/to/granite-switch-4.1-8b` | Long-context caps, on a server started with `--max-model-len 131072` and the 8b: the danger-zone header path (a ~98k-token request answered with the header, rejected without it), the 131,072 backstop, the default 32k/64k caps, and that `/v1/decisions` has no header escape. Unlike the scripts above it needs the checkpoint's tokenizer (transformers). |
+| `python3 scripts/accuracy_check.py --base-url URL` | Accuracy, log-loss and Brier score on 200 BoolQ validation rows (public data, downloaded when it runs, needs internet). Fails below 75% accuracy, which catches a wrong invocation marker. To check an upgrade or a changed setting, run it on each deployment with `--save`, then `--compare` the second against the first: it reports items only one run got right and an exact McNemar p-value. |
 | `SYSTEMONE_BASE_URL=URL pytest tests/test_decisions_e2e.py` | `/v1/decisions` and `/v1/systemone` return the same answers for equivalent requests. |
+
+### A short deployment check
+
+On a fresh server, in this order (about five minutes after the model has loaded):
+
+```bash
+python3 scripts/e2e_check.py --base-url URL      # wire formats, chat on the same server, prefix cache
+python3 scripts/probe_check.py --base-url URL    # limits and escaping
+python3 scripts/accuracy_check.py --base-url URL # answers are still good
+```
+
+Before upgrading vLLM, granite-switch or this plugin, run `accuracy_check.py --save before.json`
+on the old deployment and `--compare before.json` on the new one.
+
+### Startup checks and logs
+
+- The server refuses to start if a probe decision prompt does not carry exactly one adapter
+  control token inside the question turn. The usual cause is a wrong
+  `SYSTEMONE_INVOCATION_MARKER` or `SYSTEMONE_ADAPTER_NAME`; the error names both. The probe
+  logs nothing when it passes.
+- Each question logs the probability mass the option labels hold. Below 0.9 it logs a warning
+  (a wrong layout or marker makes the model want a token outside the labels); otherwise it
+  logs at debug level. Answers are never refused on it.
 
 ## Third-party schemas
 
@@ -81,7 +109,8 @@ licence. TypeSafe's own `openapi.json` carries no licence and is not used.
 
 ## Not in this repository
 
-Accuracy was compared on labelled public datasets (BoolQ, SST-5, Banking77): the
+`scripts/accuracy_check.py` is a small public version of the accuracy comparison (BoolQ
+only). The larger comparison on labelled public datasets (BoolQ, SST-5, Banking77): the
 `/v1/decisions` route against the same prompt sent over `/v1/chat/completions`, against
 the layout with the system prompt, and FlashAttention 2 against 3. That harness and its
 results are not published here; STATUS.md says what was compared. The Decision Index
