@@ -758,3 +758,53 @@ def test_engine_reads_per_request_are_bounded(monkeypatch):
 def test_identity_content_encoding_is_accepted():
     assert sp._check_content_headers({"content-encoding": "identity"}) is None
     assert sp._check_content_headers({"content-encoding": "gzip"})[0] == 415
+
+
+class _ProbeTok:
+    """Tokenizer stub: the 'text' is a list of ids, so tests choose where the control id (7) sits."""
+
+    unk_token_id = -1
+
+    def __init__(self, with_gen, without_gen):
+        self._out = {True: with_gen, False: without_gen}
+
+    def convert_tokens_to_ids(self, token):
+        return 7
+
+    def apply_chat_template(self, messages, tokenize, add_generation_prompt, adapter_name):
+        return add_generation_prompt
+
+    def __call__(self, text, add_special_tokens=False):
+        return {"input_ids": self._out[text]}
+
+
+def _probe_renderer(tok, state, instructions, descs):
+    return [{"role": "user", "content": "q"}], [1, 2]
+
+
+def test_check_activation_accepts_one_control_token_inside_the_conversation():
+    tok = _ProbeTok(with_gen=[1, 7, 2, 3, 9, 9], without_gen=[1, 7, 2, 3])
+    sp._check_activation(tok, _probe_renderer, "decision")
+
+
+@pytest.mark.parametrize(
+    "with_gen, without_gen",
+    [
+        ([1, 2, 3, 9], [1, 2, 3]),  # no control token
+        ([7, 1, 7, 9], [7, 1, 7]),  # two
+        ([1, 2, 3, 7, 9], [1, 2, 3]),  # fallback: control just before the assistant header
+    ],
+)
+def test_check_activation_refuses_missing_duplicate_or_misplaced_control_token(with_gen, without_gen):
+    with pytest.raises(RuntimeError, match="exactly one"):
+        sp._check_activation(_ProbeTok(with_gen, without_gen), _probe_renderer, "decision")
+
+
+def test_label_mass_warns_below_the_floor_and_never_raises(caplog):
+    import math
+
+    with caplog.at_level("DEBUG", logger=sp._log.name):
+        sp._log_label_mass("q", [math.log(0.2), math.log(0.2)])
+        sp._log_label_mass("q", [math.log(0.6), math.log(0.39)])
+    levels = [r.levelname for r in caplog.records]
+    assert levels == ["WARNING", "DEBUG"]

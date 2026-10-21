@@ -576,6 +576,47 @@ def _label_logprobs_by_id(top_logprobs) -> dict[int, float]:
         raise EngineError("the engine returned a malformed label token", 500) from e
 
 
+_LABEL_MASS_WARN = 0.9
+
+
+def _log_label_mass(name: str, label_logprobs: list[float]) -> None:
+    """Log the probability mass the option labels hold before normalising. Low mass means the
+    model wanted a token outside the labels (a wrong marker, a broken layout). Observation only:
+    answers are never gated on it."""
+    mass = sum(math.exp(lp) for lp in label_logprobs)
+    if mass < _LABEL_MASS_WARN:
+        _log.warning("decision %r: option labels hold only %.3f of the probability mass", name, mass)
+    else:
+        _log.debug("decision %r: label mass %.4f", name, mass)
+
+
+def _check_activation(tok, renderer, adapter_name: str) -> None:
+    """Refuse to start unless a rendered probe question carries exactly one adapter control
+    token, placed inside the conversation. With a wrong marker the chat template either adds
+    none or falls back to putting one just before the assistant header, so the question would
+    silently run on the base model."""
+    control = f"<|{adapter_name}|>"
+    control_id = tok.convert_tokens_to_ids(control) if hasattr(tok, "convert_tokens_to_ids") else None
+    if not hasattr(tok, "apply_chat_template") or control_id in (None, getattr(tok, "unk_token_id", None)):
+        _log.warning("cannot check adapter activation: no chat template or no %s token", control)
+        return
+    messages, _ = renderer(tok, "probe state", "Is this a probe?", ["No / false", "Yes / true"])
+
+    def ids(add_generation_prompt: bool) -> list[int]:
+        text = tok.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=add_generation_prompt, adapter_name=adapter_name
+        )
+        return tok(text, add_special_tokens=False)["input_ids"]
+
+    full, conversation = ids(True), ids(False)
+    in_conversation = control_id in conversation[:-1]
+    if full.count(control_id) != 1 or not in_conversation:
+        raise RuntimeError(
+            f"a probe decision prompt does not carry exactly one {control} inside the question turn: "
+            "check SYSTEMONE_INVOCATION_MARKER and SYSTEMONE_ADAPTER_NAME against the checkpoint's chat template"
+        )
+
+
 def _warn_if_speculative(args) -> None:
     """Every read uses logprob_token_ids, which vLLM crashes on when a speculative-decoding
     request shares the batch (vllm-project/vllm#42592, fix #44727)."""
@@ -674,6 +715,7 @@ async def _answer_question(
     # Every chunk is a separate engine request over the same prompt, so usage counts each.
     usage = _sum_usage([_chunk_usage(resp.usage) for resp in responses])
 
+    _log_label_mass(name, [by_id[tid] for tid in label_ids])
     probs = _softmax([by_id[tid] for tid in label_ids])
 
     if q.type == "choice":
@@ -1063,6 +1105,7 @@ class SystemOnePlugin:
         state.systemone_renderer = _load_renderer()
         state.systemone_limiter = _Limiter(_max_concurrent())
         _check_renderer_settings(state.systemone_renderer)
+        _check_activation(state.systemone_tokenizer, state.systemone_renderer, state.systemone_adapter_name)
 
 
 def _check_renderer_settings(renderer) -> None:

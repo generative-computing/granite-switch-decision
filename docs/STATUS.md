@@ -24,19 +24,22 @@ and `ibm-granite/granite-switch-4.1-8b` unless a row names another checkpoint.
 | Load | 1 to 128 concurrent clients, three-question requests | about 140 requests/s plateau, no errors |
 | Plugin-only install | the README's steps in a fresh environment, then its `vllm serve` command and the e2e battery | pass |
 | Install from this repository | `pip install git+https://github.com/generative-computing/granite-switch-systemone` into a fresh venv, over HTTPS and SSH with authenticated access while the repository was private; entry-point check; the unit and spec suites against the installed copy from a neutral directory | pass, 184 tests; not yet repeated anonymously, which needs the repository to be public |
-| vLLM 0.26.0, 0.27.1, 0.28.0, 0.29.0 live | one server per version on one H100 (torch 2.11.0+cu130 on 0.26, torch 2.13.0+cu130 on the rest): the e2e battery, `probe_check`, `test_decisions_e2e`, `test_prefix_sharing`, and the unit suite under each version's own venv | 11/11 e2e and every suite passes on all four versions |
+| vLLM 0.26.0, 0.27.1, 0.28.0, 0.29.0 live (at `v0.1.0` only; not repeated for later changes) | one server per version on one H100 (torch 2.11.0+cu130 on 0.26, torch 2.13.0+cu130 on the rest): the e2e battery, `probe_check`, `test_decisions_e2e`, `test_prefix_sharing`, and the unit suite under each version's own venv | 11/11 e2e and every suite passes on all four versions |
 | The 30b checkpoint | `granite-switch-4.1-30b` on vLLM 0.30.0, `--tensor-parallel-size 2` on two H100s: the full battery | pass |
 | Tensor parallelism | the 8b with `--tensor-parallel-size 2`: the full battery | pass |
 | Long contexts | the 8b with `--max-model-len 131072`, `scripts/longctx_check.py` (9 checks) | 9/9: a 98k-token request answered in one engine read with the danger-zone header and rejected without it; the 131,072 backstop and the default 32k/64k caps enforced; `/v1/decisions` has no header escape |
 | Docker image build | `docker build --platform linux/amd64`, plain and `WITH_ASR=1` variants | both build; the stack inside is package-identical to the live-tested one (PyPI vLLM 0.30.0, torch 2.13.0+cu130, transformers 5.17.0, granite-switch 0.1.1); entry points and imports verified in-container |
-| Model-card Decision Index score | the Decision Index kit's 1,068-row stratified fast subset (edition 0.3, default seed) through `/v1/systemone` on a `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1` server at `--max-model-len 131072`, scored sample-relative with the kit's own chance levels and weights | 8b: 40.1 vs the card's 42.9; 30b: 48.6 vs the card's 50.1; per-area numbers scatter both ways around the card's (see the caveats below) |
+| Serving from the image | the `WITH_ASR=1` image on one H100 (vLLM 0.30.0, the 8b), run with enroot because a Docker daemon was not available on the GPU nodes, with only the checkpoint mounted: `e2e_check`, `probe_check`, `accuracy_check` | pass (11/11, 6/6, accuracy as on the pip path). The plain image with the speech model supplied through a mounted cache also passed |
+| Plain image, no speech model | the plain image with only the checkpoint mounted | does not start with the 8b: the checkpoint enables speech input and the offline cache lacks the default speech model. `serve.sh` now stops before vLLM with a message naming the model and the fixes (`WITH_ASR=1`, a mounted cache, or `HF_HUB_OFFLINE=0`) |
+| Decision Index runs | samples of the Decision Index suite (edition 0.3) through `/v1/systemone` at `--max-model-len 131072`, on the 8b and the 30b, as an end-to-end validation of the endpoint | completes with no errors; scores are not reported here while the methodology is verified, and the model card's published figures are the reference (see the caveats below) |
 
 ## Not tested
 
-- **Live serving from the Docker image.** The image builds, and its package stack is
-  identical to the live-tested one (the default `vllm/vllm-openai:v0.30.0` tag ships
-  the PyPI vLLM wheel with torch 2.13.0+cu130, the same packages the live servers ran),
-  but no GPU container host was available to serve from the image itself.
+- **Serving the image under Docker.** The image was served under enroot, on one H100, with the 8b
+  (see the table). That runs the same filesystem and environment as the image, but not
+  `docker run` itself: its `ENTRYPOINT` (enroot ignores it, so `serve.sh` was started explicitly),
+  its `--gpus all` handling and `--ipc=host` were not exercised. The 30b and tensor parallelism
+  were not run from the image.
 - **The 3b.** The only 3b checkpoint, `granite-switch-4.1-3b-preview`, ships twelve
   adapters (`citations`, `query_rewrite`, `query_clarification`, `hallucination_detection`,
   `answerability`, `factuality-detection`, `policy-guardrails`, `factuality-correction`,
@@ -54,9 +57,8 @@ differ in bytes from the lab's pinned file (per-benchmark counts match; the adde
 GSM8K rows are byte-identical), a known kit condition also hit by other public runs,
 worked around by running the v2 cut on the rebuilt rows; and 4 sample rows over 64k
 tokens are rejected by the documented default caps (scored as wrong by the kit's rules).
-With those caveats the two checkpoints land 2.8 and 1.5 points under their card scores,
-with every area within ±8. That is close to the published numbers but not a match, and
-the sample differs from IBM's, so it does not show the serving path is identical.
+These runs are validation that the endpoint works end to end on a realistic benchmark.
+They do not show the serving path is identical to the one that produced the card's figures.
 
 ## Known gaps
 
@@ -70,6 +72,6 @@ the sample differs from IBM's, so it does not show the serving path is identical
   requests getting 503s. The cap is off by default, and there is no priority between the
   two kinds of traffic.
 - **No system prompt by default.** The model card's published score used one; this plugin
-  omits it so decisions can share the prefix cache with chat. In our comparisons it
-  raised accuracy on rating (`score`) questions. `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1`
-  turns it on (tested live); the default stays off until the trade-off is confirmed.
+  omits it so decisions can share the prefix cache with chat. How it affects accuracy is
+  still being evaluated. `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1` turns it on (tested
+  live); the default stays off until that is settled.

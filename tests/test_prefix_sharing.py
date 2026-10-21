@@ -23,7 +23,7 @@ import os
 
 import pytest
 
-from granite_switch_systemone import renderer
+from granite_switch_systemone import plugin, renderer
 
 transformers = pytest.importorskip("transformers")
 
@@ -129,3 +129,10 @@ def test_chat_with_its_own_system_prompt_shares_no_full_block(tok):
         ],
     )
     assert _shared(chat, _decision(tok, "Does this need urgent attention?")) < BLOCK_SIZE
+
+
+def test_activation_probe_accepts_the_real_template_and_refuses_a_wrong_marker(tok, monkeypatch):
+    plugin._check_activation(tok, renderer.render, "decision")
+    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "## DECISION")
+    with pytest.raises(RuntimeError, match="exactly one"):
+        plugin._check_activation(tok, renderer.render, "decision")

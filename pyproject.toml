@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "granite-switch-systemone"
-version = "0.1.0"
+version = "0.1.1"
 description = "jev system-one (/v1/systemone) and OpenAI Decisions (/v1/decisions) APIs as vLLM endpoint plugins for granite-switch, mounted alongside /v1/chat/completions on the same server."
 readme = "README.md"
 # SPDX license expressions and license-files need setuptools 77.
@@ -24,7 +24,7 @@ dependencies = []
 # httpx backs fastapi's TestClient for the route-level tests in test_decisions.py;
 # jsonschema validates both routes against published schemas (tests/specs.py); typesafe-sdk
 # (MIT) supplies jev's wire models for the /v1/systemone schema test.
-dev = ["fastapi", "pydantic", "pytest", "ruff==0.17.1", "ty==0.0.25", "httpx", "jsonschema", "typesafe-sdk==0.7.5"]
+dev = ["fastapi", "pydantic", "pytest", "ruff==0.17.1", "ty==0.0.90", "httpx", "jsonschema", "typesafe-sdk==0.7.5"]
 
 [project.entry-points."vllm.endpoint_plugins"]
 granite_switch_systemone = "granite_switch_systemone.plugin:register"

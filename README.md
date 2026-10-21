@@ -9,7 +9,7 @@ two decision APIs, on the same server and GPU cache as `/v1/chat/completions`:
 - `POST /v1/systemone`: [jev's system-one API](https://docs.typesafe.ai/api).
 
 Each question is answered by one engine read of the adapter's single-token option labels,
-returned as calibrated probabilities. Callers need no prompt format, marker or label scheme.
+returned as softmax probabilities, with confidence computed as in jev's examples. Callers need no prompt format, marker or label scheme.
 
 What has and has not been tested is in [docs/STATUS.md](docs/STATUS.md); how to run
 the tests is in [docs/TESTING.md](docs/TESTING.md).
@@ -28,10 +28,10 @@ Prerequisites:
 
 - Linux with an NVIDIA GPU; the 8b fits on one 80 GB H100.
 - Python 3.11+, PyTorch 2.11+ (granite-switch requires it; CUDA 13 builds tested).
-- vLLM 0.26 to 0.30. That range comes from granite-switch 0.1.1, which pins
-  `vllm>=0.26,<0.31`; this plugin's vLLM APIs are present across all of it. Every
-  line in the range has been served live with the full battery (see
-  [docs/STATUS.md](docs/STATUS.md)).
+- **vLLM 0.30.0 is the tested version.** Use it unless you have a reason not to. granite-switch
+  0.1.1 pins `vllm>=0.26,<0.31`, and `v0.1.0` was also served live on 0.26 to 0.29, but changes
+  since then have been checked on 0.30.0 only. Treat 0.26 to 0.29 as unverified for this
+  version (see [docs/STATUS.md](docs/STATUS.md)).
 
 ```bash
 pip install "granite-switch[vllm]==0.1.1" "transformers>=5.16"
@@ -75,10 +75,26 @@ torch match what granite-switch declares and are the packages the live tests ran
 plus `granite-switch[vllm]==0.1.1`, `transformers==5.17.0` and this plugin. Weights are
 not baked in: mount a downloaded checkpoint at `/repository`, or set `MODEL_DIR`.
 
+**Speech model.** The 8b and 30b checkpoints enable speech input and name no speech model, so
+Granite Switch falls back to a default one (`ibm-granite/granite-speech-5.0-470m-turboctc`).
+The image runs with the Hub offline, so that model must already be in its cache. The plain
+build does not include it, and a server started from it with these checkpoints stops during
+startup. Build with `--build-arg WITH_ASR=1`, which bakes the model in:
+
+```bash
+docker build --platform linux/amd64 --build-arg WITH_ASR=1 -t granite-switch-systemone:asr .
+```
+
+Alternatively mount a cache that holds the model and set `HF_HUB_CACHE` to it, or set
+`HF_HUB_OFFLINE=0` so it downloads at startup. `serve.sh` checks this before starting vLLM and
+says which of these to do.
+
 **Status of the image: lightly tested.** It builds (amd64, plain and `WITH_ASR=1`) and the
-packages and plugin entry points were checked inside it, but it has not been served on a
-GPU host. The pip path above is what the live tests used. If you run the image, treat the
-first start as the test and report what you find (see [docs/STATUS.md](docs/STATUS.md)).
+packages and plugin entry points were checked inside it. The plain build was served on one
+H100 with the speech model supplied through a mounted cache, and the wire, robustness and
+accuracy checks passed; see [docs/STATUS.md](docs/STATUS.md) for what was and was not run. The
+pip path above is what most of the live tests used. If you run the image, treat the first
+start as the test and report what you find.
 
 ## Verify the deployment
 
@@ -86,12 +102,14 @@ first start as the test and report what you find (see [docs/STATUS.md](docs/STAT
 curl -fsS http://localhost:8000/health && echo healthy
 curl -fsS http://localhost:8000/v1/models        # lists "granite-switch"
 python3 scripts/e2e_check.py --base-url http://localhost:8000    # needs only the standard library
+python3 scripts/accuracy_check.py --base-url http://localhost:8000   # answers are still good (needs internet)
 ```
 
 `e2e_check.py` exits 0 when all its checks pass (wire formats on both routes, route
 parity, chat still working, prefix-cache sharing). Run it from a checkout of this
 repository; it works against any host. If the server exits at startup, the log names
-the cause: an unknown `SYSTEMONE_ADAPTER_NAME`, or a checkpoint with no `decision` adapter.
+the cause: an unknown `SYSTEMONE_ADAPTER_NAME`, a checkpoint with no `decision` adapter, or an
+invocation marker the chat template does not activate the adapter on (checked at startup).
 
 ## Securing the server
 
@@ -116,7 +134,7 @@ bursts slowed chat p50 from 235 ms to 1,088 ms in our load test (see docs/STATUS
 vLLM now has its own `/v1/systemone` ([#59299](https://github.com/vllm-project/vllm/pull/59299),
 merged 2026-10-08) and `/v1/decisions` ([#60465](https://github.com/vllm-project/vllm/pull/60465),
 merged 2026-10-13). Both are on `main` after 0.30.0, so the next vLLM release will carry them.
-This package is for vLLM 0.26 to 0.30, where they are absent, and it stops being needed when
+This package is for vLLM 0.30 (and, untested since `v0.1.0`, 0.26 to 0.29), where they are absent, and it stops being needed when
 you move to a release that has them. The upstream endpoints differ from this plugin in wire
 details (this one follows jev's format and OpenAI's schema as published).
 
@@ -196,9 +214,8 @@ equivalent questions and return the same probabilities.
 - **No system prompt by default.** This lets a decision share the prefix cache with a chat request
   whose first turn is the same `State:` turn. Any chat with its own system prompt, or
   that sends the state without `State:`, shares nothing; decisions about one state always
-  share it with each other. The model card's published score used a system prompt, and in
-  our tests it scored higher on rating (`score`) questions without changing yes/no ones;
-  `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1` turns it on.
+  share it with each other. The model card's published score used a system prompt; its effect
+  on accuracy is still being evaluated. `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1` turns it on.
 - **Caller text is escaped.** Special tokens and the invocation marker inside state,
   instructions or descriptions are broken with an invisible U+2060, so they cannot forge
   turns or move the adapter's activation point.
