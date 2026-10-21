@@ -208,7 +208,7 @@ equivalent questions and return the same probabilities.
 ## Behaviour and limits
 
 - **Prompt.** Two user turns, `State:\n<state>` then `### DECISION` with the question and
-  lettered options (A–Z, then 0–9, then two-letter labels), read as a softmax over the
+  lettered options (A–Z, then AA, AB, ... for more than 26), read as a softmax over the
   label logits. Predicates render "A: No / false", "B: Yes / true". An option without a
   description is described by its value.
 - **No system prompt by default.** This lets a decision share the prefix cache with a chat request

@@ -34,6 +34,26 @@ def test_build_label_pool_returns_single_token_letters():
     assert len({token_id for _, token_id in pool}) == 3
 
 
+def test_build_label_pool_goes_from_letters_to_two_letter_combinations_without_digits():
+    """The adapter was trained on A..Z then AA, AB, ...; digits were not in its alias pool."""
+
+    class _Tok:
+        """Every ASCII letter and every digit is one token; every other string is two."""
+
+        def __init__(self):
+            self._ids = {}
+
+        def __call__(self, text, add_special_tokens=False):
+            if text.isalpha() and len(text) <= 2 or text.isdigit() and len(text) == 1:
+                return {"input_ids": [self._ids.setdefault(text, len(self._ids))]}
+            return {"input_ids": [0, 1]}
+
+    labels = [label for label, _ in renderer.build_label_pool(_Tok(), 40)]
+    assert labels[:26] == list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    assert labels[26:30] == ["AA", "AB", "AC", "AD"]
+    assert not any(label.isdigit() for label in labels)
+
+
 def test_build_label_pool_raises_if_not_enough_single_token_labels():
     class _AlwaysMultiToken:
         def __call__(self, text, add_special_tokens=False):

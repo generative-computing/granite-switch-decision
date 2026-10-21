@@ -136,3 +136,13 @@ def test_activation_probe_accepts_the_real_template_and_refuses_a_wrong_marker(t
     monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "## DECISION")
     with pytest.raises(RuntimeError, match="exactly one"):
         plugin._check_activation(tok, renderer.render, "decision")
+
+
+def test_label_pool_reaches_the_option_ceiling_on_letters_alone(tok):
+    """255 is the most options the API accepts. The pool must reach it with letters and two-letter
+    combinations that are single tokens in the real tokenizer, with no digits."""
+    pool = renderer.build_label_pool(tok, 255)
+    labels = [label for label, _ in pool]
+    assert labels[:28] == [*"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "AA", "AB"]
+    assert not any(label.isdigit() for label in labels)
+    assert len({token_id for _, token_id in pool}) == 255
