@@ -16,7 +16,7 @@ the tests is in [docs/TESTING.md](docs/TESTING.md).
 
 ## Install
 
-`v0.1.1` is the current release. Pick one path:
+`v0.1.2` is the current release. Pick one path:
 
 - **You already run vLLM:** install the plugin into that environment, below. This is the path tested most.
 - **You want a container:** build the image from this repository, further below. It is
@@ -35,7 +35,7 @@ Prerequisites:
 
 ```bash
 pip install "granite-switch[vllm]==0.1.1" "transformers>=5.16"
-pip install "git+https://github.com/generative-computing/granite-switch-systemone@v0.1.1"
+pip install "git+https://github.com/generative-computing/granite-switch-systemone@v0.1.2"
 export VLLM_PLUGINS=register_granite_switch,granite_switch_systemone
 export SYSTEMONE_INVOCATION_MARKER="### DECISION"
 vllm serve ibm-granite/granite-switch-4.1-8b --served-model-name granite-switch \
@@ -53,7 +53,7 @@ with an NVIDIA GPU, the NVIDIA container toolkit and Docker:
 
 ```bash
 # 1. Get the code at a release tag
-git clone --branch v0.1.1 https://github.com/generative-computing/granite-switch-systemone
+git clone --branch v0.1.2 https://github.com/generative-computing/granite-switch-systemone
 cd granite-switch-systemone
 
 # 2. Download the checkpoint (public, not gated; about 18 GB)
@@ -208,7 +208,7 @@ equivalent questions and return the same probabilities.
 ## Behaviour and limits
 
 - **Prompt.** Two user turns, `State:\n<state>` then `### DECISION` with the question and
-  lettered options (A–Z, then 0–9, then two-letter labels), read as a softmax over the
+  lettered options (A–Z, then AA, AB, ... for more than 26), read as a softmax over the
   label logits. Predicates render "A: No / false", "B: Yes / true". An option without a
   description is described by its value.
 - **No system prompt by default.** This lets a decision share the prefix cache with a chat request

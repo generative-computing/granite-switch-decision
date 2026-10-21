@@ -79,13 +79,13 @@ def _specials(tok) -> list[str]:
 
 
 def build_label_pool(tok, need: int) -> list[tuple[str, int]]:
-    """`need` single-token labels: A..Z first (readable), then digits, then any
-    other two-letter combination, so wide (>26-option) `choice` questions still get
-    a valid single-token label pool. Returns `(label_string, token_id)` pairs."""
+    """`need` single-token labels: A..Z first, then the two-letter combinations AA, AB, ... that
+    tokenize to one token, so wide (>26-option) `choice` questions still get a valid label pool.
+    This is the alias scheme the adapter was trained on; digits were not in its training pool.
+    Returns `(label_string, token_id)` pairs."""
     pool: list[tuple[str, int]] = []
     seen: set[int] = set()
     candidates = list(PLAIN_LETTERS)
-    candidates += list("0123456789")
     candidates += [a + b for a in PLAIN_LETTERS for b in PLAIN_LETTERS]
     for label in candidates:
         if len(pool) >= need:
