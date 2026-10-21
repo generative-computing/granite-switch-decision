@@ -28,10 +28,10 @@ Prerequisites:
 
 - Linux with an NVIDIA GPU; the 8b fits on one 80 GB H100.
 - Python 3.11+, PyTorch 2.11+ (granite-switch requires it; CUDA 13 builds tested).
-- vLLM 0.26 to 0.30. That range comes from granite-switch 0.1.1, which pins
-  `vllm>=0.26,<0.31`; this plugin's vLLM APIs are present across all of it. Every
-  line in the range has been served live with the full battery (see
-  [docs/STATUS.md](docs/STATUS.md)).
+- **vLLM 0.30.0 is the tested version.** Use it unless you have a reason not to. granite-switch
+  0.1.1 pins `vllm>=0.26,<0.31`, and `v0.1.0` was also served live on 0.26 to 0.29, but changes
+  since then have been checked on 0.30.0 only. Treat 0.26 to 0.29 as unverified for this
+  version (see [docs/STATUS.md](docs/STATUS.md)).
 
 ```bash
 pip install "granite-switch[vllm]==0.1.1" "transformers>=5.16"
@@ -118,7 +118,7 @@ bursts slowed chat p50 from 235 ms to 1,088 ms in our load test (see docs/STATUS
 vLLM now has its own `/v1/systemone` ([#59299](https://github.com/vllm-project/vllm/pull/59299),
 merged 2026-10-08) and `/v1/decisions` ([#60465](https://github.com/vllm-project/vllm/pull/60465),
 merged 2026-10-13). Both are on `main` after 0.30.0, so the next vLLM release will carry them.
-This package is for vLLM 0.26 to 0.30, where they are absent, and it stops being needed when
+This package is for vLLM 0.30 (and, untested since `v0.1.0`, 0.26 to 0.29), where they are absent, and it stops being needed when
 you move to a release that has them. The upstream endpoints differ from this plugin in wire
 details (this one follows jev's format and OpenAI's schema as published).
 
