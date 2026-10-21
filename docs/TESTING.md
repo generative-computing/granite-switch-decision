@@ -45,8 +45,7 @@ it needs `gitleaks` on `PATH` for the last of those.
   score levels (at most 10), which are checked against the plugin's own limits.
   Without `typesafe-sdk` the test skips and says what to install.
 - `tests/test_renderer.py`: prompt layout, label pool, special-token and marker
-  escaping (only the `<|...|>` tokens and the marker are escaped; tag tokens such as
-  `<think>` stay whole), the experimental system prompt switch.
+  escaping, the experimental system prompt switch.
 - `tests/test_plugin.py` also covers the startup activation probe and the label-mass log.
 
 ## Manual: needs the checkpoint's tokenizer, no GPU
@@ -58,9 +57,8 @@ SYSTEMONE_TOKENIZER=ibm-granite/granite-switch-4.1-8b pytest tests/test_prefix_s
 
 `tests/test_prefix_sharing.py` renders the real prompt with the checkpoint's tokenizer
 and chat template and counts which 16-token prefix-cache blocks a decision can share with
-other requests. It also checks that escaping leaves the template's own role and control
-tokens alone, and that the startup activation probe accepts the real chat template and
-refuses a wrong marker. It is skipped in CI because it downloads the tokenizer.
+other requests. It also checks that the startup activation probe accepts the real chat
+template and refuses a wrong marker. It is skipped in CI because it downloads the tokenizer.
 
 ## Manual: needs a running server
 

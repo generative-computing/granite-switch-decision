@@ -65,7 +65,7 @@ TOKEN_BREAK = "\u2060"
 
 
 def escape_special_tokens(text: str, specials: list[str]) -> str:
-    """Break every occurrence of the given special tokens in caller text, so state,
+    """Break every occurrence of the tokenizer's added tokens in caller text, so state,
     instructions and descriptions cannot forge turns or a second adapter activation."""
     for special in specials:
         if special in text:
@@ -74,12 +74,8 @@ def escape_special_tokens(text: str, specials: list[str]) -> str:
 
 
 def _specials(tok) -> list[str]:
-    """The added tokens that can forge a turn or move the adapter: the `<|...|>` family (roles,
-    end of text, control tokens). Tag tokens such as `<tool_call>` and `<think>` cannot close a
-    turn or switch adapters, so they stay intact; splitting them cost 5 to 9 tokens each."""
     added: Callable[[], dict[str, int]] | None = getattr(tok, "get_added_vocab", None)
-    structural = [t for t in added() if t.startswith("<|") and t.endswith("|>")] if added else []
-    return sorted(structural, key=lambda token: len(token), reverse=True)
+    return sorted(list(added()), key=lambda token: len(token), reverse=True) if added else []
 
 
 def build_label_pool(tok, need: int) -> list[tuple[str, int]]:

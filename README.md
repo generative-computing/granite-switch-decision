@@ -201,7 +201,7 @@ equivalent questions and return the same probabilities.
   share it with each other. The model card's published score used a system prompt, and in
   our tests it scored higher on rating (`score`) questions without changing yes/no ones;
   `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1` turns it on.
-- **Caller text is escaped.** The `<|...|>` special tokens (roles, end of text, adapter control tokens) and the invocation marker inside state,
+- **Caller text is escaped.** Special tokens and the invocation marker inside state,
   instructions or descriptions are broken with an invisible U+2060, so they cannot forge
   turns or move the adapter's activation point.
 - **Input.** `input` messages must have role `user`, and images are rejected; the trained
