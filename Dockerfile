@@ -6,8 +6,10 @@
 #
 #   docker build --platform linux/amd64 -t <your-registry>/granite-switch-systemone:<tag> .
 #
-# Optional ASR support (build granite-switch[audio] in, and bake in a specific speech
-# model's weights at a pinned revision -- see ASR_MODEL/ASR_REVISION below):
+# Optional speech input (granite-switch[audio], and a specific speech model's weights baked in
+# at a pinned revision -- see ASR_MODEL/ASR_REVISION below). Decisions do not use it, so
+# serve.sh switches it off unless SYSTEMONE_SPEECH_INPUT=1; build with WITH_ASR=1 for an image
+# that has what it needs:
 #   docker build --platform linux/amd64 --build-arg WITH_ASR=1 \
 #       -t <your-registry>/granite-switch-systemone:<tag>-asr .
 # vLLM 0.30, the version this plugin is tested on live (granite-switch 0.1.1 supports
@@ -39,11 +41,16 @@ RUN python3 -m pip list --format=freeze | grep -i -E "^(vllm|torch|torchaudio|to
 # baked in as a Hub cache at the revision this image was tested with, without the
 # repo's unused .py files. The server runs with the Hub offline, so a missing/moved file
 # fails startup instead of silently fetching something else.
+# The pinned commit is downloaded by hash, not from `main`, so the build does not change when
+# the model repository moves. A download by commit writes no refs/main, and the offline lookup
+# for the revision "main" reads that file, so it is written here and then checked.
 ARG ASR_MODEL=ibm-granite/granite-speech-5.0-470m-turboctc
 ARG ASR_REVISION=947f59af40db9791170a0628cf0f3f4812d720f1
 RUN if [ "$WITH_ASR" = "1" ]; then \
-        hf download ${ASR_MODEL} --cache-dir /opt/hf-cache --exclude "*.py" > /dev/null \
-        && test "$(cat /opt/hf-cache/models--${ASR_MODEL//\//--}/refs/main)" = "${ASR_REVISION}"; \
+        hf download ${ASR_MODEL} --revision ${ASR_REVISION} --cache-dir /opt/hf-cache --exclude "*.py" > /dev/null \
+        && mkdir -p /opt/hf-cache/models--${ASR_MODEL//\//--}/refs \
+        && printf '%s' "${ASR_REVISION}" > /opt/hf-cache/models--${ASR_MODEL//\//--}/refs/main \
+        && test -d /opt/hf-cache/models--${ASR_MODEL//\//--}/snapshots/${ASR_REVISION}; \
     fi
 ENV HF_HUB_CACHE=/opt/hf-cache HF_HUB_OFFLINE=1
 

@@ -75,24 +75,29 @@ torch match what granite-switch declares and are the packages the live tests ran
 plus `granite-switch[vllm]==0.1.1`, `transformers==5.17.0` and this plugin. Weights are
 not baked in: mount a downloaded checkpoint at `/repository`, or set `MODEL_DIR`.
 
-**Speech model.** The 8b and 30b checkpoints enable speech input and name no speech model, so
-Granite Switch falls back to a default one (`ibm-granite/granite-speech-5.0-470m-turboctc`).
-The image runs with the Hub offline, so that model must already be in its cache. The plain
-build does not include it, and a server started from it with these checkpoints stops during
-startup. Build with `--build-arg WITH_ASR=1`, which bakes the model in:
+**Speech input.** The 8b and 30b checkpoints enable speech input, and Granite Switch then loads a
+speech model while the engine starts. Decisions never use it, so `serve.sh` switches speech
+input off (`--hf-overrides '{"asr_enabled": false}'`): the 8b and 30b start from the checkpoint
+alone, with nothing else to download or mount. The same server's `/v1/chat/completions` then
+takes no audio input.
 
-```bash
-docker build --platform linux/amd64 --build-arg WITH_ASR=1 -t granite-switch-systemone:asr .
-```
+To keep speech input, set `SYSTEMONE_SPEECH_INPUT=1`. The image runs with the Hub offline, so
+the speech model (`ibm-granite/granite-speech-5.0-470m-turboctc`, about 1 GB) must then be
+available. Any one of:
 
-Alternatively mount a cache that holds the model and set `HF_HUB_CACHE` to it, or set
-`HF_HUB_OFFLINE=0` so it downloads at startup. `serve.sh` checks this before starting vLLM and
-says which of these to do.
+- build the image with it baked in (a pinned revision):
+  `docker build --platform linux/amd64 --build-arg WITH_ASR=1 -t granite-switch-systemone:asr .`
+- mount a Hub cache that holds it and set `HF_HUB_CACHE` to that directory;
+- set `HF_HUB_OFFLINE=0` so it downloads at startup.
 
-**Status of the image: lightly tested.** It builds (amd64, plain and `WITH_ASR=1`) and the
-packages and plugin entry points were checked inside it. The plain build was served on one
-H100 with the speech model supplied through a mounted cache, and the wire, robustness and
-accuracy checks passed; see [docs/STATUS.md](docs/STATUS.md) for what was and was not run. The
+With `SYSTEMONE_SPEECH_INPUT=1`, `serve.sh` checks for the model first and, if it is missing,
+stops with a message naming the model and these options.
+
+**Status of the image: lightly tested.** It builds (amd64, with and without `WITH_ASR=1`) and
+the packages and plugin entry points were checked inside it. The default image was served on
+H100s with only the checkpoint mounted and speech input off, the 8b on one GPU and the 30b on two with tensor
+parallelism, and the wire, robustness and accuracy checks passed. That was run under enroot,
+not `docker run` itself; see [docs/STATUS.md](docs/STATUS.md) for what was and was not run. The
 pip path above is what most of the live tests used. If you run the image, treat the first
 start as the test and report what you find.
 
