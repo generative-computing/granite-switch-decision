@@ -74,6 +74,7 @@ Python standard library unless noted.
 | `python3 scripts/probe_check.py --base-url URL --load 30` | Adds a load test at 1, 8 and 32 clients with chat latency alongside. Reported, not asserted. |
 | `python3 scripts/longctx_check.py --base-url URL --tokenizer /path/to/granite-switch-4.1-8b` | Long-context caps, on a server started with `--max-model-len 131072` and the 8b: the danger-zone header path (a ~98k-token request answered with the header, rejected without it), the 131,072 backstop, the default 32k/64k caps, and that `/v1/decisions` has no header escape. Unlike the scripts above it needs the checkpoint's tokenizer (transformers). |
 | `python3 scripts/accuracy_check.py --base-url URL` | Accuracy, log-loss and Brier score on 200 BoolQ validation rows (public data, downloaded when it runs, needs internet). Fails below 75% accuracy, which catches a wrong invocation marker. To check an upgrade or a changed setting, run it on each deployment with `--save`, then `--compare` the second against the first: it reports items only one run got right and an exact McNemar p-value. |
+| `python3 scripts/load_test.py --base-url URL` | Throughput and latency of `/v1/decisions` at 1, 8, 32, 64 and 128 clients, with the server's prefix-cache hit rate. `--mode unique` (default) gives every request a fresh state; `--mode identical` repeats one body and flatters throughput. Run both and report both. See below. |
 | `SYSTEMONE_BASE_URL=URL pytest tests/test_decisions_e2e.py` | `/v1/decisions` and `/v1/systemone` return the same answers for equivalent requests. |
 
 ### A short deployment check
@@ -88,6 +89,35 @@ python3 scripts/accuracy_check.py --base-url URL # answers are still good
 
 Before upgrading vLLM, granite-switch or this plugin, run `accuracy_check.py --save before.json`
 on the old deployment and `--compare before.json` on the new one.
+
+### Load testing
+
+`scripts/load_test.py` is a standard-library client. Every client loops on one keep-alive connection and
+sends three questions (a predicate, a 20-way choice, a 5-level score) over a state of about 230 tokens.
+
+```bash
+python3 scripts/load_test.py --base-url http://HOST:PORT                       # unique state per request
+python3 scripts/load_test.py --base-url http://HOST:PORT --mode identical      # one body, cache-flattered
+python3 scripts/load_test.py --base-url http://HOST:PORT --levels 1,8,32 --seconds 30
+```
+
+How to read it:
+
+- Run the client on a different machine from the server, and run it on a server with no other traffic.
+  The prefix-cache hit rate comes from vLLM's `/metrics` and counts all traffic.
+- `identical` is an upper bound. The server answers almost every token from its prefix cache, so its
+  throughput is not what real, varied states will see. Report `unique` as the realistic figure.
+- Throughput levels off once the GPU is saturated; past that point more clients only add latency.
+  Where it levels off depends on the GPU, the model and the length of the state, so measure on your
+  hardware instead of reusing a figure from another deployment.
+- With `SYSTEMONE_MAX_CONCURRENT_REQUESTS` set, requests above the cap get HTTP 503 and are not queued.
+  The client resends at once by default, which makes a capped server look worse than a caller that backs
+  off would see. Pass `--backoff SECONDS` to wait after a non-200. The cap protects chat latency on a
+  shared server; it does not raise decision throughput.
+- `--max-num-seqs` is not worth tuning for decisions: they are prefill-only, and vLLM's default was not the
+  limit in our runs.
+- Each level is one run of 45 seconds by default, so there is no measure of spread. Repeat a level before
+  drawing conclusions from a difference of a few per cent.
 
 ### Startup checks and logs
 
