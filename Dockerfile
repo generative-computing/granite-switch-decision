@@ -6,12 +6,12 @@
 #
 #   docker build --platform linux/amd64 -t <your-registry>/granite-switch-systemone:<tag> .
 #
-# The speech model the 8b and 30b checkpoints need is baked in by default (granite-switch[audio],
-# and a specific speech model's weights at a pinned revision -- see ASR_MODEL/ASR_REVISION
-# below). The server runs with the Hub offline, so without it those checkpoints cannot start.
-# A slim image without it, for a checkpoint that has speech input off or a mounted cache:
-#   docker build --platform linux/amd64 --build-arg WITH_ASR=0 \
-#       -t <your-registry>/granite-switch-systemone:<tag>-slim .
+# Optional speech input (granite-switch[audio], and a specific speech model's weights baked in
+# at a pinned revision -- see ASR_MODEL/ASR_REVISION below). Decisions do not use it, so
+# serve.sh switches it off unless SYSTEMONE_SPEECH_INPUT=1; build with WITH_ASR=1 for an image
+# that has what it needs:
+#   docker build --platform linux/amd64 --build-arg WITH_ASR=1 \
+#       -t <your-registry>/granite-switch-systemone:<tag>-asr .
 # vLLM 0.30, the version this plugin is tested on live (granite-switch 0.1.1 supports
 # 0.26-0.30). The default tag is the CUDA 13 build (torch 2.13.0+cu130, the PyPI vLLM
 # wheel) -- the same stack the live tests ran. The -cu129 tag ships torch 2.14.0,
@@ -21,12 +21,12 @@ FROM vllm/vllm-openai:v0.30.0
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG GRANITE_SWITCH_VERSION=0.1.1
-ARG WITH_ASR=1
+ARG WITH_ASR=0
 
 # Pinned to a specific, released granite-switch version (not `main`) so this image's
 # behavior does not drift when upstream changes -- deliberately a tagged PyPI release,
 # not a floating branch. transformers 5.17 is what granite-switch supports; [audio] is
-# only installed when WITH_ASR=1, the default (it brings librosa and soundfile, used only by the
+# only installed when WITH_ASR=1 (it brings librosa and soundfile, used only by the
 # ASR cascade). The base image's vLLM, torch, and torchcodec (CUDA 13 builds) are kept
 # as they are: the constraint file pins them so nothing in granite-switch's dependency
 # tree can move them.

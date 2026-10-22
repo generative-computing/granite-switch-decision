@@ -95,11 +95,11 @@ on the old deployment and `--compare before.json` on the new one.
   control token inside the question turn. The usual cause is a wrong
   `SYSTEMONE_INVOCATION_MARKER` or `SYSTEMONE_ADAPTER_NAME`; the error names both. The probe
   logs nothing when it passes.
-- Before `vllm serve` starts, `serve.sh` runs `python3 -m granite_switch_systemone.preflight`. If
-  the checkpoint enables speech input, the Hub is offline and the speech model is not in the
-  cache, it stops with a message naming the model and the ways to fix it, instead of failing
-  later inside the engine. The image sets `HF_HUB_OFFLINE=1`, so this applies to the slim
-  build (`--build-arg WITH_ASR=0`); the default build bakes the model in.
+- `serve.sh` switches the checkpoint's speech input off by default, which decisions do not use, so
+  the 8b and 30b start without a speech model. With `SYSTEMONE_SPEECH_INPUT=1` it first runs
+  `python3 -m granite_switch_systemone.preflight`: if the Hub is offline and the speech model is not
+  in the cache, it stops with a message naming the model and the ways to fix it, instead of failing
+  later inside the engine. The image sets `HF_HUB_OFFLINE=1`.
 - Each question logs the probability mass the option labels hold. Below 0.9 it logs a warning
   (a wrong layout or marker makes the model want a token outside the labels); otherwise it
   logs at debug level. Answers are never refused on it.

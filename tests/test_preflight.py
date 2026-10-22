@@ -105,7 +105,8 @@ def test_main_exits_1_and_says_what_to_do(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert DEFAULT in err
     assert str(tmp_path / "cache") in err
-    assert "WITH_ASR=0" in err
+    assert "WITH_ASR=1" in err
+    assert "SYSTEMONE_SPEECH_INPUT" in err
     assert "HF_HUB_OFFLINE=0" in err
 
 

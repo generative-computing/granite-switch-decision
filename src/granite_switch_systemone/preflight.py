@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Checks to run before `vllm serve` starts; `serve.sh` calls this module.
+"""Checks to run before `vllm serve` starts; `serve.sh` calls this module when
+SYSTEMONE_SPEECH_INPUT=1 (with speech input off the speech model is never loaded).
 
 Granite Switch's audio processor loads a speech model while the engine profiles memory. The 8b
 and 30b checkpoints enable it (`asr_enabled`) without naming a model, so granite-switch falls
@@ -68,7 +69,8 @@ def main(argv: list[str]) -> int:
         f"granite-switch-systemone: this checkpoint enables speech input (asr_enabled in config.json) and needs\n"
         f'the speech model "{model_id}", but the Hub is offline and it is not in the cache at\n'
         f"{hub_cache_dir(os.environ)}. Do one of:\n"
-        "  - use the default image (built without --build-arg WITH_ASR=0), which bakes the model in\n"
+        "  - use an image built with --build-arg WITH_ASR=1, which bakes the model in\n"
+        "  - leave speech input off (SYSTEMONE_SPEECH_INPUT unset or 0), which decisions do not need\n"
         "  - mount a cache that holds it and point HF_HUB_CACHE at that directory\n"
         "  - set HF_HUB_OFFLINE=0 so the model can be downloaded at startup",
         file=sys.stderr,
