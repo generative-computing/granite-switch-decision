@@ -28,18 +28,17 @@ and `ibm-granite/granite-switch-4.1-8b` unless a row names another checkpoint.
 | The 30b checkpoint | `granite-switch-4.1-30b` on vLLM 0.30.0, `--tensor-parallel-size 2` on two H100s: the full battery | pass |
 | Tensor parallelism | the 8b with `--tensor-parallel-size 2`: the full battery | pass |
 | Long contexts | the 8b with `--max-model-len 131072`, `scripts/longctx_check.py` (9 checks) | 9/9: a 98k-token request answered in one engine read with the danger-zone header and rejected without it; the 131,072 backstop and the default 32k/64k caps enforced; `/v1/decisions` has no header escape |
-| Docker image build | `docker build --platform linux/amd64`, plain and `WITH_ASR=1` variants | both build; the stack inside is package-identical to the live-tested one (PyPI vLLM 0.30.0, torch 2.13.0+cu130, transformers 5.17.0, granite-switch 0.1.1); entry points and imports verified in-container |
-| Serving from the image | the `WITH_ASR=1` image on one H100 (vLLM 0.30.0, the 8b), run with enroot because a Docker daemon was not available on the GPU nodes, with only the checkpoint mounted: `e2e_check`, `probe_check`, `accuracy_check` | pass (11/11, 6/6, accuracy as on the pip path). The plain image with the speech model supplied through a mounted cache also passed |
-| Plain image, no speech model | the plain image with only the checkpoint mounted | does not start with the 8b: the checkpoint enables speech input and the offline cache lacks the default speech model. `serve.sh` now stops before vLLM with a message naming the model and the fixes (`WITH_ASR=1`, a mounted cache, or `HF_HUB_OFFLINE=0`) |
+| Docker image build | `docker build --platform linux/amd64`, default (speech model baked in) and `WITH_ASR=0` (slim) variants | both build; the stack inside is package-identical to the live-tested one (PyPI vLLM 0.30.0, torch 2.13.0+cu130, transformers 5.17.0, granite-switch 0.1.1); entry points and imports verified in-container; the default image holds the pinned speech-model revision as its only snapshot, with `refs/main` pointing at it |
+| Serving from the image | the default image (v0.1.2 code) under enroot (no Docker daemon on the GPU nodes), only the checkpoint mounted and no Hub cache: the 8b on one H100, then the 30b on two H100s with `--tensor-parallel-size 2` (set from the GPU count by `serve.sh`). On each: `e2e_check`, `probe_check`, `accuracy_check` | pass on both: 11/11 and 6/6, accuracy as on the pip path. The earlier `WITH_ASR=1` image on the 8b, and the plain image with a mounted speech cache, also passed |
+| Slim image, no speech model | the `WITH_ASR=0` image with only the checkpoint mounted | does not start with the 8b: the checkpoint enables speech input and the offline cache lacks the default speech model. `serve.sh` now stops before vLLM with a message naming the model and the fixes (the default image, a mounted cache, or `HF_HUB_OFFLINE=0`) |
 | Decision Index runs | samples of the Decision Index suite (edition 0.3) through `/v1/systemone` at `--max-model-len 131072`, on the 8b and the 30b, as an end-to-end validation of the endpoint | completes with no errors; scores are not reported here while the methodology is verified, and the model card's published figures are the reference (see the caveats below) |
 
 ## Not tested
 
-- **Serving the image under Docker.** The image was served under enroot, on one H100, with the 8b
-  (see the table). That runs the same filesystem and environment as the image, but not
+- **Serving the image under Docker.** The image was served under enroot, on the 8b (one H100)
+  and the 30b (two H100s; see the table). That runs the same filesystem and environment as the image, but not
   `docker run` itself: its `ENTRYPOINT` (enroot ignores it, so `serve.sh` was started explicitly),
-  its `--gpus all` handling and `--ipc=host` were not exercised. The 30b and tensor parallelism
-  were not run from the image.
+  its `--gpus all` handling and `--ipc=host` were not exercised.
 - **The 3b.** The only 3b checkpoint, `granite-switch-4.1-3b-preview`, ships twelve
   adapters (`citations`, `query_rewrite`, `query_clarification`, `hallucination_detection`,
   `answerability`, `factuality-detection`, `policy-guardrails`, `factuality-correction`,

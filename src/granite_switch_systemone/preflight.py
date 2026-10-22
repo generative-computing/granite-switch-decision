@@ -68,7 +68,7 @@ def main(argv: list[str]) -> int:
         f"granite-switch-systemone: this checkpoint enables speech input (asr_enabled in config.json) and needs\n"
         f'the speech model "{model_id}", but the Hub is offline and it is not in the cache at\n'
         f"{hub_cache_dir(os.environ)}. Do one of:\n"
-        "  - use an image built with --build-arg WITH_ASR=1, which bakes the model in\n"
+        "  - use the default image (built without --build-arg WITH_ASR=0), which bakes the model in\n"
         "  - mount a cache that holds it and point HF_HUB_CACHE at that directory\n"
         "  - set HF_HUB_OFFLINE=0 so the model can be downloaded at startup",
         file=sys.stderr,
