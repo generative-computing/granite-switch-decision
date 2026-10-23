@@ -48,23 +48,26 @@ listed, and once the variable is set it loads nothing else, so leaving out
 
 ### Docker
 
-No supported image is published, so you build it yourself (it is large, about 30 GB). On a Linux host
-with an NVIDIA GPU, the NVIDIA container toolkit and Docker:
+Release images are published to GitHub Container Registry as
+`ghcr.io/generative-computing/granite-switch-systemone` (linux/amd64 only; about 30 GB, so the first
+pull takes a while). `latest` is the newest release and each release also has its version as a tag.
+The package is currently private, so pulling needs `docker login ghcr.io` with an account that has
+access; until it is made public, build the image yourself (below). On a Linux host with an NVIDIA
+GPU, the NVIDIA container toolkit and Docker:
 
 ```bash
-# 1. Get the code at a release tag
-git clone --branch v0.1.3 https://github.com/generative-computing/granite-switch-systemone
-cd granite-switch-systemone
-
-# 2. Download the checkpoint (public, not gated; about 18 GB)
+# 1. Download the checkpoint (public, not gated; about 18 GB)
 hf download ibm-granite/granite-switch-4.1-8b --local-dir /srv/models/granite-switch-4.1-8b
 
-# 3. Build and run
-docker build --platform linux/amd64 -t granite-switch-systemone .
+# 2. Run the image
 docker run -d --name gss --gpus all --ipc=host -p 8000:8000 \
     -v /srv/models/granite-switch-4.1-8b:/repository:ro \
-    granite-switch-systemone
+    ghcr.io/generative-computing/granite-switch-systemone:0.1.3
 ```
+
+To build the image yourself instead, clone the repository at a release tag and run
+`docker build --platform linux/amd64 -t granite-switch-systemone .` in it, then use that name in
+`docker run`.
 
 Then check it ([Verify the deployment](#verify-the-deployment)). Model loading takes a few
 minutes; follow it with `docker logs -f gss`. `--ipc=host` is vLLM's standard setting for
@@ -74,6 +77,14 @@ The image is `vllm/vllm-openai:v0.30.0` (the default CUDA 13 tag, whose vLLM whe
 torch match what granite-switch declares and are the packages the live tests ran)
 plus `granite-switch[vllm]==0.1.1`, `transformers==5.17.0` and this plugin. Weights are
 not baked in: mount a downloaded checkpoint at `/repository`, or set `MODEL_DIR`.
+
+**Build arguments.** `GRANITE_SWITCH_VERSION` (default `0.1.1`) is the granite-switch release
+installed. `WITH_ASR=1` adds the speech extra and bakes in the speech model. `ASR_MODEL` and
+`ASR_REVISION` name the Hub repository and the commit that is baked in; the default commit is the
+one the image was tested with, so a rebuild does not change when the model repository moves. To
+bake in a different speech model commit, pass
+`--build-arg WITH_ASR=1 --build-arg ASR_REVISION=<commit>`. The checkpoint is never a build
+argument: it is mounted when the container runs.
 
 **Speech input.** The 8b and 30b checkpoints enable speech input, and Granite Switch then loads a
 speech model while the engine starts. Decisions never use it, so `serve.sh` switches speech
@@ -94,7 +105,7 @@ With `SYSTEMONE_SPEECH_INPUT=1`, `serve.sh` checks for the model first and, if i
 stops with a message naming the model and these options.
 
 **Status of the image: lightly tested.** It builds (amd64, with and without `WITH_ASR=1`) and
-the packages and plugin entry points were checked inside it. The default image was served on
+the packages and plugin entry points were checked inside it. The published `0.1.3` image was served on
 H100s with only the checkpoint mounted and speech input off, the 8b on one GPU and the 30b on two with tensor
 parallelism, and the wire, robustness and accuracy checks passed. That was run under enroot,
 not `docker run` itself; see [docs/STATUS.md](docs/STATUS.md) for what was and was not run. The
