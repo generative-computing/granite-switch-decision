@@ -265,7 +265,7 @@ The pip path is what most of the live testing used. The container image is light
 for amd64 and arm64, with and without the speech model, and the packages and plugin entry points were checked
 inside it. The published `0.1.3` image was served on H100 GPUs with only the checkpoint mounted and
 speech input off, the 8b on one GPU and the 30b on two with tensor parallelism, and the wire,
-robustness and accuracy checks passed. That was run under enroot and not with `docker run`. The arm64 image was also served with `docker run` on an NVIDIA GB10 (the 8b, default image). The arm64 `-asr` image was built but not served; see
+robustness and accuracy checks passed. That was run under enroot and not with `docker run`. The arm64 image was also served with `docker run` on an NVIDIA GB10 (the 8b, default image). The arm64 `-asr` image was also served with `docker run` and passed the speech check; see
 [docs/STATUS.md](docs/STATUS.md) for exactly what was and was not run. If you run the image, treat the
 first start as a test and tell us what you find.
 
