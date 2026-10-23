@@ -18,6 +18,21 @@ permissions:
 
 jobs:
   image:
+    # Two images per release: the default (decisions only, no speech model inside) and an
+    # `-asr` variant with the pinned speech model baked in, for chat speech input.
+    name: image (${{ matrix.variant }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `latest` stays the default image; the asr image gets `latest-asr` (onlatest=true),
+          # so the two variants never push the same tag.
+          - variant: default
+            with_asr: "0"
+            flavor: "latest=auto"
+          - variant: asr
+            with_asr: "1"
+            flavor: "suffix=-asr,onlatest=true"
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,6 +60,7 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
+          flavor: ${{ matrix.flavor }}
           tags: |
             type=semver,pattern={{version}}
             type=ref,event=branch
@@ -53,6 +69,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
+          build-args: WITH_ASR=${{ matrix.with_asr }}
           push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
