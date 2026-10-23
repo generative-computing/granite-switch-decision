@@ -22,9 +22,9 @@ You need a Linux machine with an NVIDIA GPU. The 8b checkpoint fits on one 80 GB
 ### Container
 
 Release images are published to GitHub Container Registry as
-`ghcr.io/generative-computing/granite-switch-systemone` for linux/amd64 only. `latest` is the newest
-release, and each release is also tagged with its version. The pull is about 9 GB and the image takes
-about 30 GB on disk. You also need Docker and the NVIDIA container toolkit.
+`ghcr.io/generative-computing/granite-switch-systemone` for linux/amd64 and linux/arm64, so one tag
+works on both. `latest` is the newest release, and each release is also tagged with its version. The
+pull is about 9 GB and the image takes about 30 GB on disk (amd64 figures). You also need Docker and the NVIDIA container toolkit.
 
 ```bash
 # Download the checkpoint (public, not gated, about 18 GB)
@@ -41,7 +41,7 @@ setting for shared memory, and it matters most when you run with tensor parallel
 
 The ghcr package is currently private, so `docker pull` needs `docker login ghcr.io` with an account
 that has access. Until it is public, build the image yourself: clone this repository at a release tag
-and run `docker build --platform linux/amd64 -t granite-switch-systemone .`.
+and run `docker build -t granite-switch-systemone .`.
 
 The image is `vllm/vllm-openai:v0.30.0` plus `granite-switch[audio]==0.1.1`, `transformers==5.17.0` and
 this plugin. It has no weights in it. It reads the checkpoint from `/repository` (override with
@@ -141,7 +141,7 @@ about 1 GB) has to be available. Any one of these works:
 
 - Use an image with the model built in: the `-asr` tag of a release (releases made with the current
   workflow publish one), or build it yourself:
-  `docker build --platform linux/amd64 --build-arg WITH_ASR=1 -t granite-switch-systemone:asr .`
+  `docker build --build-arg WITH_ASR=1 -t granite-switch-systemone:asr .`
 - Mount a Hub cache that holds the model and set `HF_HUB_CACHE` to that directory.
 - Set `HF_HUB_OFFLINE=0` so the model downloads at startup.
 
@@ -262,10 +262,10 @@ migration is a Granite Switch read strategy, and `renderer.render(tok, state, in
 ## How well tested is this?
 
 The pip path is what most of the live testing used. The container image is lightly tested: it builds
-for amd64, with and without the speech model, and the packages and plugin entry points were checked
+for amd64 and arm64, with and without the speech model, and the packages and plugin entry points were checked
 inside it. The published `0.1.3` image was served on H100 GPUs with only the checkpoint mounted and
 speech input off, the 8b on one GPU and the 30b on two with tensor parallelism, and the wire,
-robustness and accuracy checks passed. That was run under enroot and not with `docker run`; see
+robustness and accuracy checks passed. That was run under enroot and not with `docker run`. The arm64 image was also served with `docker run` on an NVIDIA GB10 (the 8b, default image). The arm64 `-asr` image was built but not served; see
 [docs/STATUS.md](docs/STATUS.md) for exactly what was and was not run. If you run the image, treat the
 first start as a test and tell us what you find.
 
