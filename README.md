@@ -106,6 +106,12 @@ stops with a message naming the model and these options. It also checks that the
 (`av`, `scipy`, `soundfile`, `soxr`) are installed. The release images include them. If you run
 the plugin outside the image, install `vllm[audio]` too: without it the server starts and passes
 `/health`, then answers every audio request with HTTP 500 "Please install vllm[audio]".
+
+The speech model in the `-asr` image is the multilingual release (English, French, German, Spanish,
+Portuguese, Italian and Japanese, with punctuation and capitalization for the Latin-script
+languages in our tests). Pass `--build-arg ASR_REVISION=947f59af40db9791170a0628cf0f3f4812d720f1`
+to bake in the earlier English-only revision instead.
+
 **Status of the image: lightly tested.** It builds (amd64, with and without `WITH_ASR=1`) and
 the packages and plugin entry points were checked inside it. The published `0.1.3` image was served on
 H100s with only the checkpoint mounted and speech input off, the 8b on one GPU and the 30b on two with tensor

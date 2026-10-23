@@ -46,7 +46,7 @@ RUN python3 -m pip list --format=freeze | grep -i -E "^(vllm|torch|torchaudio|to
 # the model repository moves. A download by commit writes no refs/main, and the offline lookup
 # for the revision "main" reads that file, so it is written here and then checked.
 ARG ASR_MODEL=ibm-granite/granite-speech-5.0-470m-turboctc
-ARG ASR_REVISION=947f59af40db9791170a0628cf0f3f4812d720f1
+ARG ASR_REVISION=1dd23f46f6d4e6eae2531982ba2e33220086dd97
 RUN if [ "$WITH_ASR" = "1" ]; then \
         hf download ${ASR_MODEL} --revision ${ASR_REVISION} --cache-dir /opt/hf-cache --exclude "*.py" > /dev/null \
         && mkdir -p /opt/hf-cache/models--${ASR_MODEL//\//--}/refs \
