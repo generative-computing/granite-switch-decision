@@ -8,4 +8,4 @@ adapter-specific piece this package carries today (the decision adapter's traine
 prompt convention); `plugin.py` itself has no knowledge of any specific adapter.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
