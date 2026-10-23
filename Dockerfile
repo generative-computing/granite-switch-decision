@@ -6,10 +6,10 @@
 #
 #   docker build --platform linux/amd64 -t <your-registry>/granite-switch-systemone:<tag> .
 #
-# Optional speech input (granite-switch[audio], and a specific speech model's weights baked in
-# at a pinned revision -- see ASR_MODEL/ASR_REVISION below). Decisions do not use it, so
-# serve.sh switches it off unless SYSTEMONE_SPEECH_INPUT=1; build with WITH_ASR=1 for an image
-# that has what it needs:
+# Optional speech input. The audio libraries are in every variant; WITH_ASR=1 also bakes in a
+# specific speech model's weights at a pinned revision (see ASR_MODEL/ASR_REVISION below).
+# Decisions do not use speech, so serve.sh switches it off unless SYSTEMONE_SPEECH_INPUT=1;
+# build with WITH_ASR=1 for an image that has the speech model too:
 #   docker build --platform linux/amd64 --build-arg WITH_ASR=1 \
 #       -t <your-registry>/granite-switch-systemone:<tag>-asr .
 # vLLM 0.30, the version this plugin is tested on live (granite-switch 0.1.1 supports
@@ -25,17 +25,18 @@ ARG WITH_ASR=0
 
 # Pinned to a specific, released granite-switch version (not `main`) so this image's
 # behavior does not drift when upstream changes -- deliberately a tagged PyPI release,
-# not a floating branch. transformers 5.17 is what granite-switch supports; [audio] is
-# only installed when WITH_ASR=1 (it brings librosa and soundfile, used only by the
-# ASR cascade). The base image's vLLM, torch, and torchcodec (CUDA 13 builds) are kept
-# as they are: the constraint file pins them so nothing in granite-switch's dependency
-# tree can move them.
+# not a floating branch. transformers 5.17 is what granite-switch supports. The [audio]
+# extra (av, scipy, soundfile, soxr: the libraries vLLM needs to decode audio) is
+# installed in every variant, so SYSTEMONE_SPEECH_INPUT=1 works with a mounted speech
+# model; without them every audio request fails with HTTP 500 "install vllm[audio]" while
+# health and decisions look fine. WITH_ASR=1 only adds the baked-in speech model below.
+# The base image's vLLM, torch, and torchcodec (CUDA 13 builds) are kept as they are: the
+# constraint file pins them so nothing in granite-switch's dependency tree can move them.
 RUN python3 -m pip list --format=freeze | grep -i -E "^(vllm|torch|torchaudio|torchcodec|torchvision|flashinfer-python)==" > /tmp/keep.txt \
-    && if [ "$WITH_ASR" = "1" ]; then EXTRA="granite-switch[audio]"; else EXTRA="granite-switch[vllm]"; fi \
     && uv pip install --system --constraint /tmp/keep.txt \
-        "${EXTRA}==${GRANITE_SWITCH_VERSION}" \
+        "granite-switch[audio]==${GRANITE_SWITCH_VERSION}" \
         "transformers==5.17.0" \
-    && python3 -c "import granite_switch.vllm, vllm, transformers, torch; print(vllm.__version__, transformers.__version__, torch.__version__)"
+    && python3 -c "import granite_switch.vllm, vllm, transformers, torch, av, scipy, soundfile, soxr; print(vllm.__version__, transformers.__version__, torch.__version__)"
 
 # The ASR cascade's speech model, named by Hugging Face id in the checkpoint's config,
 # baked in as a Hub cache at the revision this image was tested with, without the

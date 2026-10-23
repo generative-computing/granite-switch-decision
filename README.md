@@ -79,7 +79,7 @@ plus `granite-switch[vllm]==0.1.1`, `transformers==5.17.0` and this plugin. Weig
 not baked in: mount a downloaded checkpoint at `/repository`, or set `MODEL_DIR`.
 
 **Build arguments.** `GRANITE_SWITCH_VERSION` (default `0.1.1`) is the granite-switch release
-installed. `WITH_ASR=1` adds the speech extra and bakes in the speech model. `ASR_MODEL` and
+installed, with its `audio` extra in every variant. `WITH_ASR=1` bakes in the speech model. `ASR_MODEL` and
 `ASR_REVISION` name the Hub repository and the commit that is baked in; the default commit is the
 one the image was tested with, so a rebuild does not change when the model repository moves. To
 bake in a different speech model commit, pass
@@ -102,8 +102,10 @@ available. Any one of:
 - set `HF_HUB_OFFLINE=0` so it downloads at startup.
 
 With `SYSTEMONE_SPEECH_INPUT=1`, `serve.sh` checks for the model first and, if it is missing,
-stops with a message naming the model and these options.
-
+stops with a message naming the model and these options. It also checks that the audio libraries
+(`av`, `scipy`, `soundfile`, `soxr`) are installed. The release images include them. If you run
+the plugin outside the image, install `vllm[audio]` too: without it the server starts and passes
+`/health`, then answers every audio request with HTTP 500 "Please install vllm[audio]".
 **Status of the image: lightly tested.** It builds (amd64, with and without `WITH_ASR=1`) and
 the packages and plugin entry points were checked inside it. The published `0.1.3` image was served on
 H100s with only the checkpoint mounted and speech input off, the 8b on one GPU and the 30b on two with tensor
