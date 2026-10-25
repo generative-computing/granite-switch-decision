@@ -58,7 +58,7 @@ and `v0.1.0` was also served on 0.26 to 0.29, but nothing since has been checked
 pip install "granite-switch[vllm]==0.1.1" "transformers>=5.16"
 pip install "git+https://github.com/generative-computing/granite-switch-decision@v0.2.0"
 export VLLM_PLUGINS=register_granite_switch,granite_switch_decision
-export GRANITE_SWITCH_DECISION_INVOCATION_MARKER="### DECISION"
+export DECISION_INVOCATION_MARKER="### DECISION"
 vllm serve ibm-granite/granite-switch-4.1-8b --served-model-name granite-switch \
     --dtype bfloat16 --attention-config.flash_attn_version=2 --enable-prompt-tokens-details
 ```
@@ -88,7 +88,7 @@ python3 scripts/e2e_check.py --base-url http://localhost:8000
 `e2e_check.py` needs only the standard library and works against any host, so run it from a checkout of
 this repository. It exits 0 when the wire formats on both routes, route parity, chat and prefix-cache
 sharing all pass. If the server stops at startup, its log names the cause: an unknown
-`GRANITE_SWITCH_DECISION_ADAPTER_NAME`, a checkpoint with no `decision` adapter, or an invocation marker that does not
+`DECISION_ADAPTER_NAME`, a checkpoint with no `decision` adapter, or an invocation marker that does not
 activate the adapter in the chat template.
 
 ## Make a request
@@ -123,7 +123,7 @@ In vLLM 0.30.0 that key check covers every `/v1` route, including `/v1/decisions
 have not run it against a live server, so after enabling it, confirm that an unauthenticated `curl` to
 `/v1/decisions` returns 401.
 
-If the server also handles chat, set `GRANITE_SWITCH_DECISION_MAX_CONCURRENT_REQUESTS` (8 to 32 is a sensible
+If the server also handles chat, set `DECISION_MAX_CONCURRENT_REQUESTS` (8 to 32 is a sensible
 range). It is off by default, and without it a burst of decisions slowed chat p50 from 235 ms to
 1,088 ms in our load test (see [docs/STATUS.md](docs/STATUS.md)).
 
@@ -134,7 +134,7 @@ speech input in their configuration. Loading a speech model slows startup and de
 so `serve.sh` switches it off (`--hf-overrides '{"asr_enabled": false}'`). The checkpoint then starts
 with nothing else to download, and `/v1/chat/completions` accepts no audio.
 
-To turn it on, set `GRANITE_SWITCH_DECISION_SPEECH_INPUT=1`. The image runs with the Hugging Face Hub offline, so the
+To turn it on, set `DECISION_SPEECH_INPUT=1`. The image runs with the Hugging Face Hub offline, so the
 speech model
 ([`ibm-granite/granite-speech-5.0-470m-turboctc`](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc),
 about 1 GB) has to be available. Any one of these works:
@@ -168,12 +168,12 @@ name is passed on to `vllm serve`.
 | `MAX_MODEL_LEN` | `32768` | Longest prompt plus output. |
 | `GPU_MEMORY_UTILIZATION` | `0.90` | Share of GPU memory vLLM may use. |
 | `TENSOR_PARALLEL_SIZE` | every visible GPU | GPUs to split the model across. |
-| `GRANITE_SWITCH_DECISION_ADAPTER_NAME` | the only adapter, else `decision` | Which adapter answers. Checked against the checkpoint at startup; an unknown name stops the server. |
-| `GRANITE_SWITCH_DECISION_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. It is required: with a wrong marker the chat template activates the adapter in the wrong place without raising an error. |
-| `GRANITE_SWITCH_DECISION_SPEECH_INPUT` | `0` | `1` keeps speech input; see [Speech input](#speech-input-optional). |
-| `GRANITE_SWITCH_DECISION_MAX_CONCURRENT_REQUESTS` | `0` (no cap) | Decision requests allowed in flight across both routes. Past the cap a request gets 503 at once, so a burst cannot queue ahead of chat. |
-| `GRANITE_SWITCH_DECISION_RENDERER` | `granite_switch_decision.renderer:render` | A `module:function` that builds the prompt and label ids, for an adapter trained differently. |
-| `GRANITE_SWITCH_DECISION_EXPERIMENTAL_SYSTEM_PROMPT` | `0` | Experimental, may be removed. `1` adds the trained decision-engine system prompt, as used for the model card's published score. It stops chat requests sharing the decision prefix cache. |
+| `DECISION_ADAPTER_NAME` | the only adapter, else `decision` | Which adapter answers. Checked against the checkpoint at startup; an unknown name stops the server. |
+| `DECISION_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. It is required: with a wrong marker the chat template activates the adapter in the wrong place without raising an error. |
+| `DECISION_SPEECH_INPUT` | `0` | `1` keeps speech input; see [Speech input](#speech-input-optional). |
+| `DECISION_MAX_CONCURRENT_REQUESTS` | `0` (no cap) | Decision requests allowed in flight across both routes. Past the cap a request gets 503 at once, so a burst cannot queue ahead of chat. |
+| `DECISION_RENDERER` | `granite_switch_decision.renderer:render` | A `module:function` that builds the prompt and label ids, for an adapter trained differently. |
+| `DECISION_EXPERIMENTAL_SYSTEM_PROMPT` | `0` | Experimental, may be removed. `1` adds the trained decision-engine system prompt, as used for the model card's published score. It stops chat requests sharing the decision prefix cache. |
 
 Both routes share these settings; nothing is configured per route.
 
@@ -201,7 +201,7 @@ caching stays at vLLM's default, which is on.
 
 On every decision request the plugin itself sets `temperature=0.0`, `max_completion_tokens=1`,
 `logprob_token_ids` (the option labels' token ids, read exactly rather than from the top-K) and
-`chat_template_kwargs={"adapter_name": <GRANITE_SWITCH_DECISION_ADAPTER_NAME>}`. Callers cannot change them. vLLM
+`chat_template_kwargs={"adapter_name": <DECISION_ADAPTER_NAME>}`. Callers cannot change them. vLLM
 caps `logprob_token_ids` at 128 ids, so a `choice` with more options runs as several requests over the
 same prompt, served from the prefix cache.
 

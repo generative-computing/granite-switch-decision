@@ -19,7 +19,7 @@ report both; the identical figure is an upper bound, not what a mixed workload w
 Run it from a different machine than the server, on a server with no other traffic, and give each
 level enough time to settle (the default is 45 seconds). One run per level gives no spread.
 
-A caller that gets HTTP 503 (see GRANITE_SWITCH_DECISION_MAX_CONCURRENT_REQUESTS) here resends immediately, which
+A caller that gets HTTP 503 (see DECISION_MAX_CONCURRENT_REQUESTS) here resends immediately, which
 is harsher than a client that backs off, so a capped server's throughput looks worse than a
 well-behaved caller would see. Use --backoff SECONDS to wait after a non-200.
 """

@@ -34,7 +34,7 @@ def _run(tmp_path: Path, extra_env: dict[str, str], *args: str, asr_enabled: boo
         "HF_HUB_OFFLINE": "1",
         "HF_HUB_CACHE": str(tmp_path / "empty-cache"),
         # these tests are about the speech model, not the audio libraries
-        "GRANITE_SWITCH_DECISION_PREFLIGHT_AUDIO_MODULES": "",
+        "DECISION_PREFLIGHT_AUDIO_MODULES": "",
         **extra_env,
     }
     done = subprocess.run(["bash", str(SERVE_SH), *args], env=env, capture_output=True, text=True)
@@ -48,7 +48,7 @@ def test_speech_input_is_off_by_default_and_needs_no_speech_model(tmp_path):
 
 
 def test_speech_input_on_without_the_model_stops_before_vllm(tmp_path):
-    done, argv = _run(tmp_path, {"GRANITE_SWITCH_DECISION_SPEECH_INPUT": "1"})
+    done, argv = _run(tmp_path, {"DECISION_SPEECH_INPUT": "1"})
     assert done.returncode == 1
     assert argv == []  # vllm never started
     assert "WITH_ASR=1" in done.stderr
@@ -58,7 +58,7 @@ def test_speech_input_on_with_the_model_cached_starts_without_the_override(tmp_p
     cache = tmp_path / "empty-cache" / "models--ibm-granite--granite-speech-5.0-470m-turboctc" / "snapshots" / "abc"
     cache.mkdir(parents=True)
     (cache / "config.json").write_text("{}")
-    done, argv = _run(tmp_path, {"GRANITE_SWITCH_DECISION_SPEECH_INPUT": "1"})
+    done, argv = _run(tmp_path, {"DECISION_SPEECH_INPUT": "1"})
     assert done.returncode == 0, done.stderr
     assert "--hf-overrides" not in argv
 
@@ -67,8 +67,8 @@ def test_speech_input_on_without_the_audio_libraries_stops_before_vllm(tmp_path)
     done, argv = _run(
         tmp_path,
         {
-            "GRANITE_SWITCH_DECISION_SPEECH_INPUT": "1",
-            "GRANITE_SWITCH_DECISION_PREFLIGHT_AUDIO_MODULES": "no_such_audio_module_xyz",
+            "DECISION_SPEECH_INPUT": "1",
+            "DECISION_PREFLIGHT_AUDIO_MODULES": "no_such_audio_module_xyz",
         },
     )
     assert done.returncode == 1
@@ -85,7 +85,7 @@ def test_extra_arguments_still_reach_vllm(tmp_path):
 
 @pytest.mark.parametrize("value", ["2", "yes", ""])
 def test_bad_switch_value_is_refused(tmp_path, value):
-    done, argv = _run(tmp_path, {"GRANITE_SWITCH_DECISION_SPEECH_INPUT": value})
+    done, argv = _run(tmp_path, {"DECISION_SPEECH_INPUT": value})
     if value == "":
         assert done.returncode == 0  # empty falls back to the default, off
     else:

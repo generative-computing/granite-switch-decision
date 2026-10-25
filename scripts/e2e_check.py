@@ -138,7 +138,7 @@ DECISIONS_BODY = {
     ],
 }
 
-GRANITE_SWITCH_DECISION_BODY = {
+SYSTEMONE_BODY = {
     "model": "PLACEHOLDER",
     "state": STATE,
     "questions": {
@@ -179,7 +179,7 @@ def check_models(client: Client, model: str) -> Check:
 
 def check_systemone_shapes(client: Client, model: str) -> Check:
     check = Check("systemone_shapes")
-    status, body = client.post("/v1/systemone", {**GRANITE_SWITCH_DECISION_BODY, "model": model})
+    status, body = client.post("/v1/systemone", {**SYSTEMONE_BODY, "model": model})
     check.expect_equal(status, 200, "status")
     answers = body.get("answers", {})
     check.expect(set(answers) == {"queue", "escalate", "severity"}, "answer keys")
@@ -228,7 +228,7 @@ def check_decisions_shapes(client: Client, model: str) -> Check:
 def check_parity(client: Client, model: str, tol: float) -> Check:
     check = Check("parity")
     _, decisions = client.post("/v1/decisions", {**DECISIONS_BODY, "model": model})
-    _, systemone = client.post("/v1/systemone", {**GRANITE_SWITCH_DECISION_BODY, "model": model})
+    _, systemone = client.post("/v1/systemone", {**SYSTEMONE_BODY, "model": model})
     check.expect_equal(
         decisions["usage"]["input_tokens"], systemone["usage"]["input_tokens"], "prompt tokens (same prompt)"
     )
@@ -511,7 +511,7 @@ def main() -> int:
     parser.add_argument(
         "--system-prompt",
         action="store_true",
-        help="the server runs with GRANITE_SWITCH_DECISION_EXPERIMENTAL_SYSTEM_PROMPT=1 (changes cache expectations)",
+        help="the server runs with DECISION_EXPERIMENTAL_SYSTEM_PROMPT=1 (changes cache expectations)",
     )
     args = parser.parse_args()
 

@@ -17,7 +17,7 @@ Exit code 0 means every check passed. Checks:
   descriptions      an option without a description scores the same in any position
   cancellation      a client that disconnects mid-request leaves the engine idle
   concurrency       with --max-concurrent N (the server's
-                    GRANITE_SWITCH_DECISION_MAX_CONCURRENT_REQUESTS), a burst gets 200s and 503s
+                    DECISION_MAX_CONCURRENT_REQUESTS), a burst gets 200s and 503s
   load              with --load SECONDS, throughput and latency at 1, 8 and 32
                     clients, and chat latency alongside (reported, not asserted)
 
@@ -279,9 +279,7 @@ def main() -> int:
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--model", default="granite-switch")
     parser.add_argument("--timeout", type=float, default=300.0)
-    parser.add_argument(
-        "--max-concurrent", type=int, default=0, help="the server's GRANITE_SWITCH_DECISION_MAX_CONCURRENT_REQUESTS"
-    )
+    parser.add_argument("--max-concurrent", type=int, default=0, help="the server's DECISION_MAX_CONCURRENT_REQUESTS")
     parser.add_argument("--load", type=float, default=0, help="seconds per load level (0 skips the load test)")
     args = parser.parse_args()
     p = Probe(args.base_url, args.model, args.timeout)

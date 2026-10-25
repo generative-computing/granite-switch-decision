@@ -5,7 +5,7 @@
 #   docker build -t <registry>/granite-switch-decision:<tag> .
 #
 # The audio libraries are in every build. WITH_ASR=1 also bakes in the speech model (see
-# ASR_MODEL and ASR_REVISION); serve.sh keeps speech off unless GRANITE_SWITCH_DECISION_SPEECH_INPUT=1.
+# ASR_MODEL and ASR_REVISION); serve.sh keeps speech off unless DECISION_SPEECH_INPUT=1.
 #   docker build --build-arg WITH_ASR=1 -t <registry>/granite-switch-decision:<tag>-asr .
 #
 # vLLM 0.30 is the version tested live. The default tag is the CUDA 13 build (torch
@@ -52,7 +52,7 @@ RUN chmod +x /usr/local/bin/serve.sh
 # Endpoint plugins load only when VLLM_PLUGINS names them, and setting it stops vLLM loading
 # any others, so register_granite_switch has to be listed too.
 ENV VLLM_PLUGINS=register_granite_switch,granite_switch_decision \
-    GRANITE_SWITCH_DECISION_ADAPTER_NAME=decision \
-    GRANITE_SWITCH_DECISION_INVOCATION_MARKER="### DECISION"
+    DECISION_ADAPTER_NAME=decision \
+    DECISION_INVOCATION_MARKER="### DECISION"
 EXPOSE 8000
 ENTRYPOINT ["/usr/local/bin/serve.sh"]

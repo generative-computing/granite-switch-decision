@@ -5,7 +5,7 @@ Both routes validate their own wire format, translate to one internal question s
 answer through `openai_serving_chat.create_chat_completion`, the same engine call
 `/v1/chat/completions` uses. Each question is one exact read of its option labels'
 logprobs (`logprob_token_ids`, chunked above vLLM's 128-id cap). The adapter-specific
-prompt is built by the renderer named in `GRANITE_SWITCH_DECISION_RENDERER`.
+prompt is built by the renderer named in `DECISION_RENDERER`.
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-_RENDERER_ENV = "GRANITE_SWITCH_DECISION_RENDERER"
+_RENDERER_ENV = "DECISION_RENDERER"
 _DEFAULT_RENDERER = "granite_switch_decision.renderer:render"
-_ADAPTER_NAME_ENV = "GRANITE_SWITCH_DECISION_ADAPTER_NAME"
+_ADAPTER_NAME_ENV = "DECISION_ADAPTER_NAME"
 _DEFAULT_ADAPTER_NAME = "decision"
 
 # jev: request body <= 32 MiB.
@@ -52,13 +52,13 @@ DANGER_ZONE_HEADER = "typesafe-danger-zone-long-context"
 MAX_LABEL_OPTIONS = 128
 # Questions per request on both routes (OpenAI's limit on /v1/decisions).
 MAX_QUESTIONS = 200
-_MAX_CONCURRENT_ENV = "GRANITE_SWITCH_DECISION_MAX_CONCURRENT_REQUESTS"
+_MAX_CONCURRENT_ENV = "DECISION_MAX_CONCURRENT_REQUESTS"
 # Engine reads in flight per request, so one wide request cannot flood the engine.
 MAX_READS_PER_REQUEST = 16
 
 
 def _load_renderer():
-    """Resolve `GRANITE_SWITCH_DECISION_RENDERER` to a callable at plugin init. It is loaded by name, so
+    """Resolve `DECISION_RENDERER` to a callable at plugin init. It is loaded by name, so
     this module never imports the configured renderer directly."""
     path = os.environ.get(_RENDERER_ENV, _DEFAULT_RENDERER)
     if ":" not in path:
@@ -73,7 +73,7 @@ def _load_renderer():
 
 def _resolve_adapter_name(chat) -> str:
     """The decision adapter's name, checked against the checkpoint's own adapter list:
-    `GRANITE_SWITCH_DECISION_ADAPTER_NAME` if set, else the only adapter, else one named `decision`.
+    `DECISION_ADAPTER_NAME` if set, else the only adapter, else one named `decision`.
     A wrong name must fail startup: the chat template silently activates no adapter
     for a name it does not know."""
     adapter_names = getattr(chat.model_config.hf_config, "adapter_names", None) or []
@@ -609,7 +609,7 @@ def _check_activation(tok, renderer, adapter_name: str) -> None:
     if full.count(control_id) != 1 or not in_conversation:
         raise RuntimeError(
             f"a probe decision prompt does not carry exactly one {control} inside the question turn: "
-            "check GRANITE_SWITCH_DECISION_INVOCATION_MARKER and GRANITE_SWITCH_DECISION_ADAPTER_NAME "
+            "check DECISION_INVOCATION_MARKER and DECISION_ADAPTER_NAME "
             "against the checkpoint's chat template"
         )
 

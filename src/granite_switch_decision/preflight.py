@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Checks to run before `vllm serve` starts; `serve.sh` calls this module when
-GRANITE_SWITCH_DECISION_SPEECH_INPUT=1 (with speech input off the speech model is never loaded).
+DECISION_SPEECH_INPUT=1 (with speech input off the speech model is never loaded).
 
 Granite Switch's audio processor loads a speech model while the engine profiles memory. The 8b
 and 30b checkpoints enable it (`asr_enabled`) without naming a model, so granite-switch falls
@@ -24,7 +24,7 @@ from pathlib import Path
 # passes /health, then answers every audio request with HTTP 500 "install vllm[audio]".
 AUDIO_MODULES = ("av", "scipy", "soundfile", "soxr")
 # Test hook: a comma-separated list of the modules to treat as installed (an empty value checks nothing).
-_AUDIO_MODULES_ENV = "GRANITE_SWITCH_DECISION_PREFLIGHT_AUDIO_MODULES"
+_AUDIO_MODULES_ENV = "DECISION_PREFLIGHT_AUDIO_MODULES"
 
 # granite-switch 0.1.1's DEFAULT_ASR_MODEL_ID (granite_switch/vllm/audio/asr.py), used when the
 # checkpoint's `asr_model_id` is null. tests/test_preflight.py compares it with the installed copy.
@@ -88,7 +88,7 @@ def main(argv: list[str]) -> int:
             "Without them the server starts and passes /health, then answers every audio request with "
             'HTTP 500 "Please install vllm[audio]". Install vllm[audio] (or granite-switch[audio]) into '
             "this environment, or use a release image, which includes them. "
-            "Leave GRANITE_SWITCH_DECISION_SPEECH_INPUT unset or 0 if you do not need audio.",
+            "Leave DECISION_SPEECH_INPUT unset or 0 if you do not need audio.",
             file=sys.stderr,
         )
         return 1
@@ -100,7 +100,7 @@ def main(argv: list[str]) -> int:
         f'the speech model "{model_id}", but the Hub is offline and it is not in the cache at\n'
         f"{hub_cache_dir(os.environ)}. Do one of:\n"
         "  - use an image built with --build-arg WITH_ASR=1, which bakes the model in\n"
-        "  - leave speech input off (GRANITE_SWITCH_DECISION_SPEECH_INPUT unset or 0), which decisions do not need\n"
+        "  - leave speech input off (DECISION_SPEECH_INPUT unset or 0), which decisions do not need\n"
         "  - mount a cache that holds it and point HF_HUB_CACHE at that directory\n"
         "  - set HF_HUB_OFFLINE=0 so the model can be downloaded at startup",
         file=sys.stderr,

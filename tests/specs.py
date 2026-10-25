@@ -3,7 +3,7 @@
 
 - OpenAI Decisions: `openapi.json` from openai/openai-openapi (MIT, Copyright (c) OpenAI),
   fetched once at a pinned commit, checked against a pinned SHA-256 and cached outside
-  the repository. `GRANITE_SWITCH_DECISION_OPENAI_SPEC=<path>` uses a local copy instead.
+  the repository. `DECISION_OPENAI_SPEC=<path>` uses a local copy instead.
 - jev system-one: built from the pydantic models in TypeSafe's MIT-licensed `typesafe-sdk`
   package (a dev dependency). TypeSafe's own OpenAPI document carries no licence, so it
   is not fetched or bundled.
@@ -27,14 +27,14 @@ _CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "grani
 OPENAI_REASON = (
     "OpenAI's OpenAPI spec is unavailable. It is downloaded on first run from "
     f"{OPENAI_URL} (MIT) into {_CACHE}; allow network access once, or set "
-    "GRANITE_SWITCH_DECISION_OPENAI_SPEC to a local copy of that file."
+    "DECISION_OPENAI_SPEC to a local copy of that file."
 )
 JEV_REASON = "jev schemas need TypeSafe's MIT-licensed SDK: pip install typesafe-sdk==0.7.5 (in the dev extra)."
 
 
 def openai_spec() -> dict | None:
     """OpenAI's full OpenAPI document at the pinned commit, or None if unavailable."""
-    local = os.environ.get("GRANITE_SWITCH_DECISION_OPENAI_SPEC")
+    local = os.environ.get("DECISION_OPENAI_SPEC")
     path = Path(local) if local else _CACHE / f"openai-openapi-{OPENAI_COMMIT[:12]}.json"
     if not path.exists() and not local:
         try:
