@@ -14,7 +14,7 @@ import asyncio
 import pytest
 from pydantic import ValidationError
 
-from granite_switch_systemone import plugin as sp
+from granite_switch_decision import plugin as sp
 
 
 def _predicate(**kw):
@@ -317,13 +317,13 @@ def client(monkeypatch):
 
     app = FastAPI()
     app.include_router(sp.router)
-    app.state.systemone_chat = object()
-    app.state.systemone_tokenizer = lambda text, add_special_tokens=False: {"input_ids": [0] * len(str(text).split())}
-    app.state.systemone_max_model_len = 8192
-    app.state.systemone_served_model = "granite-switch"
-    app.state.systemone_adapter_name = "decision"
-    app.state.systemone_renderer = lambda *args: ([], [])
-    app.state.systemone_limiter = sp._Limiter(0)
+    app.state.decision_chat = object()
+    app.state.decision_tokenizer = lambda text, add_special_tokens=False: {"input_ids": [0] * len(str(text).split())}
+    app.state.decision_max_model_len = 8192
+    app.state.decision_served_model = "granite-switch"
+    app.state.decision_adapter_name = "decision"
+    app.state.decision_renderer = lambda *args: ([], [])
+    app.state.decision_limiter = sp._Limiter(0)
     return TestClient(app)
 
 
@@ -458,8 +458,8 @@ def test_engine_error_on_systemone_route_uses_its_error_shape(client, monkeypatc
 
 
 def test_full_limiter_returns_503_on_both_routes(client):
-    client.app.state.systemone_limiter = sp._Limiter(1)
-    client.app.state.systemone_limiter.in_flight = 1
+    client.app.state.decision_limiter = sp._Limiter(1)
+    client.app.state.decision_limiter.in_flight = 1
     body = {"model": "m", "input": "x", "questions": [{"type": "predicate", "instructions": "q?"}]}
     resp = client.post("/v1/decisions", json=body)
     assert resp.status_code == 503 and resp.json()["error"]["type"] == "server_error"
@@ -514,7 +514,7 @@ def test_attach_router_refuses_to_shadow_existing_routes():
         return {}
 
     with pytest.raises(RuntimeError, match="/v1/decisions"):
-        sp.SystemOnePlugin().attach_router(app)
+        sp.DecisionPlugin().attach_router(app)
 
 
 def test_attach_router_sees_routes_added_through_include_router():
@@ -530,19 +530,19 @@ def test_attach_router_sees_routes_added_through_include_router():
     app = FastAPI()
     app.include_router(upstream)
     with pytest.raises(RuntimeError, match="/v1/systemone"):
-        sp.SystemOnePlugin().attach_router(app)
+        sp.DecisionPlugin().attach_router(app)
 
 
 def test_attach_router_on_a_clean_app_mounts_both_routes():
     from fastapi import FastAPI
 
     app = FastAPI()
-    sp.SystemOnePlugin().attach_router(app)
+    sp.DecisionPlugin().attach_router(app)
     assert sp._route_exists(app, "/v1/decisions") and sp._route_exists(app, "/v1/systemone")
 
 
 def test_response_echoes_the_requested_model_alias(client):
-    client.app.state.systemone_served_names = ["granite-switch", "alias-two"]
+    client.app.state.decision_served_names = ["granite-switch", "alias-two"]
     resp = client.post(
         "/v1/decisions",
         json={

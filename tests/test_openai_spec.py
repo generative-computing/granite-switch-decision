@@ -14,7 +14,7 @@ leniencies in `ACCEPTED_LENIENTLY`.
 
 import pytest
 
-from granite_switch_systemone import plugin as sp
+from granite_switch_decision import plugin as sp
 
 pytest.importorskip("jsonschema")
 from specs import OPENAI_REASON, openai_validators  # noqa: E402
@@ -159,13 +159,13 @@ def client(monkeypatch):
 
     app = FastAPI()
     app.include_router(sp.router)
-    app.state.systemone_chat = object()
-    app.state.systemone_tokenizer = lambda text, add_special_tokens=False: {"input_ids": [0] * len(str(text).split())}
-    app.state.systemone_max_model_len = 8192
-    app.state.systemone_served_model = "granite-switch"
-    app.state.systemone_adapter_name = "decision"
-    app.state.systemone_renderer = lambda *args: ([], [])
-    app.state.systemone_limiter = sp._Limiter(0)
+    app.state.decision_chat = object()
+    app.state.decision_tokenizer = lambda text, add_special_tokens=False: {"input_ids": [0] * len(str(text).split())}
+    app.state.decision_max_model_len = 8192
+    app.state.decision_served_model = "granite-switch"
+    app.state.decision_adapter_name = "decision"
+    app.state.decision_renderer = lambda *args: ([], [])
+    app.state.decision_limiter = sp._Limiter(0)
     return TestClient(app)
 
 

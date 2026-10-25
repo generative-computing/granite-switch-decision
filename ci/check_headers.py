@@ -20,7 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_HEADER = "# SPDX-License-Identifier: Apache-2.0"
 # These two carry MIT-adapted code (see THIRD_PARTY_NOTICES.md) and are headed
 # "Apache-2.0 AND MIT"; the script checks for a header, never assumes which.
-AND_MIT_FILES = {"src/granite_switch_systemone/plugin.py", "tests/test_plugin.py"}
+AND_MIT_FILES = {"src/granite_switch_decision/plugin.py", "tests/test_plugin.py"}
 
 
 def has_header(path: pathlib.Path) -> bool:

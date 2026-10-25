@@ -5,21 +5,21 @@
 #   MODEL_DIR               default /repository (HF Inference Endpoints' mount point)
 #   TENSOR_PARALLEL_SIZE    default: every visible GPU
 #   MAX_MODEL_LEN (32768), GPU_MEMORY_UTILIZATION (0.90), PORT (8000), SERVED_MODEL_NAME
-#   SYSTEMONE_ADAPTER_NAME  default "decision"; SYSTEMONE_INVOCATION_MARKER, see README
-#   SYSTEMONE_SPEECH_INPUT  default 0: speech input is switched off, so no speech model is needed.
+#   GRANITE_SWITCH_DECISION_ADAPTER_NAME  default "decision"; GRANITE_SWITCH_DECISION_INVOCATION_MARKER, see README
+#   GRANITE_SWITCH_DECISION_SPEECH_INPUT  default 0: speech input is switched off, so no speech model is needed.
 #                           1 keeps the checkpoint's speech input; see README, "Speech input".
 set -e
 MODEL_DIR=${MODEL_DIR:-/repository}
 # The 8b and 30b checkpoints enable speech input (asr_enabled) and granite-switch then loads a
 # speech model at startup, which decisions never use. Off by default; with it on, fail early,
 # with the cause, if the speech model is not in the offline cache.
-case "${SYSTEMONE_SPEECH_INPUT:-0}" in
+case "${GRANITE_SWITCH_DECISION_SPEECH_INPUT:-0}" in
     0) SPEECH_ARGS=(--hf-overrides '{"asr_enabled": false}') ;;
-    1) SPEECH_ARGS=(); python3 -m granite_switch_systemone.preflight "$MODEL_DIR" ;;
-    *) echo "SYSTEMONE_SPEECH_INPUT must be 0 or 1, not '$SYSTEMONE_SPEECH_INPUT'" >&2; exit 2 ;;
+    1) SPEECH_ARGS=(); python3 -m granite_switch_decision.preflight "$MODEL_DIR" ;;
+    *) echo "GRANITE_SWITCH_DECISION_SPEECH_INPUT must be 0 or 1, not '$GRANITE_SWITCH_DECISION_SPEECH_INPUT'" >&2; exit 2 ;;
 esac
 TP=${TENSOR_PARALLEL_SIZE:-$(python3 -c "import torch; print(max(torch.cuda.device_count(), 1))")}
-export SYSTEMONE_ADAPTER_NAME=${SYSTEMONE_ADAPTER_NAME:-decision}
+export GRANITE_SWITCH_DECISION_ADAPTER_NAME=${GRANITE_SWITCH_DECISION_ADAPTER_NAME:-decision}
 # --dtype bfloat16: composed checkpoints carry torch_dtype null (granite-switch#126).
 # flash_attn_version=2: avoids the FA3 schedule bug (granite-switch#139, still open).
 # --max-logprobs 256: lets chat clients that read labels by top-K ask for more than 20.

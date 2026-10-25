@@ -13,7 +13,7 @@ import math
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from granite_switch_systemone import plugin as sp
+from granite_switch_decision import plugin as sp
 
 # --------------------------------------------------------------------------------------------
 # Question / SystemOneRequest schema validation (jev's 422s)
@@ -325,26 +325,26 @@ def test_resolve_adapter_name_auto_resolves_single_adapter():
 
 def test_resolve_adapter_name_prefers_decision_among_several(monkeypatch):
     """The released Switch checkpoints carry guardian-core and decision."""
-    monkeypatch.delenv("SYSTEMONE_ADAPTER_NAME", raising=False)
+    monkeypatch.delenv("GRANITE_SWITCH_DECISION_ADAPTER_NAME", raising=False)
     chat = _FakeChat(["guardian-core", "decision"])
     assert sp._resolve_adapter_name(chat) == "decision"
 
 
 def test_resolve_adapter_name_requires_env_var_with_several_and_no_decision(monkeypatch):
-    monkeypatch.delenv("SYSTEMONE_ADAPTER_NAME", raising=False)
+    monkeypatch.delenv("GRANITE_SWITCH_DECISION_ADAPTER_NAME", raising=False)
     chat = _FakeChat(["guardian-core", "classifier"])
-    with pytest.raises(RuntimeError, match="SYSTEMONE_ADAPTER_NAME"):
+    with pytest.raises(RuntimeError, match="GRANITE_SWITCH_DECISION_ADAPTER_NAME"):
         sp._resolve_adapter_name(chat)
 
 
 def test_resolve_adapter_name_requires_env_var_with_zero_adapters():
     chat = _FakeChat([])
-    with pytest.raises(RuntimeError, match="SYSTEMONE_ADAPTER_NAME"):
+    with pytest.raises(RuntimeError, match="GRANITE_SWITCH_DECISION_ADAPTER_NAME"):
         sp._resolve_adapter_name(chat)
 
 
 def test_resolve_adapter_name_honors_env_override(monkeypatch):
-    monkeypatch.setenv("SYSTEMONE_ADAPTER_NAME", "decision")
+    monkeypatch.setenv("GRANITE_SWITCH_DECISION_ADAPTER_NAME", "decision")
     chat = _FakeChat(["guardian-core", "decision"])
     assert sp._resolve_adapter_name(chat) == "decision"
 
@@ -352,7 +352,7 @@ def test_resolve_adapter_name_honors_env_override(monkeypatch):
 def test_resolve_adapter_name_env_override_still_validated(monkeypatch):
     """An override naming an adapter the checkpoint doesn't have must still fail
     loudly, not silently fall back to anything."""
-    monkeypatch.setenv("SYSTEMONE_ADAPTER_NAME", "typo-adapter-name")
+    monkeypatch.setenv("GRANITE_SWITCH_DECISION_ADAPTER_NAME", "typo-adapter-name")
     chat = _FakeChat(["decision"])
     with pytest.raises(RuntimeError, match="typo-adapter-name"):
         sp._resolve_adapter_name(chat)
@@ -369,7 +369,7 @@ def test_load_renderer_default_resolves_to_this_packages_own_renderer():
 
     _os.environ.pop(sp._RENDERER_ENV, None)
     fn = sp._load_renderer()
-    from granite_switch_systemone.renderer import render
+    from granite_switch_decision.renderer import render
 
     assert fn is render
 
@@ -381,7 +381,7 @@ def test_load_renderer_rejects_a_path_without_a_colon(monkeypatch):
 
 
 def test_load_renderer_rejects_a_missing_attribute(monkeypatch):
-    monkeypatch.setenv(sp._RENDERER_ENV, "granite_switch_systemone.renderer:nonexistent_fn")
+    monkeypatch.setenv(sp._RENDERER_ENV, "granite_switch_decision.renderer:nonexistent_fn")
     with pytest.raises(RuntimeError, match="nonexistent_fn"):
         sp._load_renderer()
 
@@ -601,7 +601,7 @@ def test_systemone_rejects_more_questions_than_the_cap():
 
 
 def test_concurrency_limit_rejects_with_503_when_full():
-    """SYSTEMONE_MAX_CONCURRENT_REQUESTS bounds decision requests in flight; past it, 503."""
+    """GRANITE_SWITCH_DECISION_MAX_CONCURRENT_REQUESTS bounds decision requests in flight; past it, 503."""
 
     async def run():
         limiter = sp._Limiter(1)
@@ -638,29 +638,29 @@ def test_concurrency_limit_zero_means_unlimited():
 def test_init_state_fails_startup_on_a_bad_system_prompt_flag(monkeypatch):
     from types import SimpleNamespace as NS
 
-    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "### DECISION")
-    monkeypatch.setenv("SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT", "yes")
+    monkeypatch.setenv("GRANITE_SWITCH_DECISION_INVOCATION_MARKER", "### DECISION")
+    monkeypatch.setenv("GRANITE_SWITCH_DECISION_EXPERIMENTAL_SYSTEM_PROMPT", "yes")
     chat = _FakeChat(["decision"])
     chat.renderer = NS(tokenizer=None)
     chat.model_config.max_model_len = 8192
     state = NS(openai_serving_chat=chat)
     args = NS(served_model_name=["m"], model="m")
-    with pytest.raises(RuntimeError, match="SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT"):
-        asyncio.run(sp.SystemOnePlugin().init_state(None, state, args))
+    with pytest.raises(RuntimeError, match="GRANITE_SWITCH_DECISION_EXPERIMENTAL_SYSTEM_PROMPT"):
+        asyncio.run(sp.DecisionPlugin().init_state(None, state, args))
 
 
 def test_init_state_fails_startup_without_an_invocation_marker(monkeypatch):
     from types import SimpleNamespace as NS
 
-    monkeypatch.delenv("SYSTEMONE_INVOCATION_MARKER", raising=False)
-    monkeypatch.delenv("SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT", raising=False)
+    monkeypatch.delenv("GRANITE_SWITCH_DECISION_INVOCATION_MARKER", raising=False)
+    monkeypatch.delenv("GRANITE_SWITCH_DECISION_EXPERIMENTAL_SYSTEM_PROMPT", raising=False)
     chat = _FakeChat(["decision"])
     chat.renderer = NS(tokenizer=None)
     chat.model_config.max_model_len = 8192
     state = NS(openai_serving_chat=chat)
     args = NS(served_model_name=["m"], model="m")
-    with pytest.raises(RuntimeError, match="SYSTEMONE_INVOCATION_MARKER"):
-        asyncio.run(sp.SystemOnePlugin().init_state(None, state, args))
+    with pytest.raises(RuntimeError, match="GRANITE_SWITCH_DECISION_INVOCATION_MARKER"):
+        asyncio.run(sp.DecisionPlugin().init_state(None, state, args))
 
 
 def test_parse_strict_json_rejects_deep_nesting_before_parsing():
@@ -743,11 +743,11 @@ def test_engine_reads_per_request_are_bounded(monkeypatch):
     from types import SimpleNamespace as NS
 
     state = NS(
-        systemone_chat=None,
-        systemone_tokenizer=None,
-        systemone_served_model="m",
-        systemone_adapter_name="decision",
-        systemone_renderer=lambda tok, s, i, descs: ([], list(range(len(descs)))),
+        decision_chat=None,
+        decision_tokenizer=None,
+        decision_served_model="m",
+        decision_adapter_name="decision",
+        decision_renderer=lambda tok, s, i, descs: ([], list(range(len(descs)))),
     )
     questions = [(str(i), sp.Question(type="noul", instructions="q?")) for i in range(60)]
     asyncio.run(sp._answer_all(state, "s", questions))

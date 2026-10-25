@@ -1,4 +1,4 @@
-# granite-switch-systemone
+# granite-switch-decision
 
 Decision APIs for [Granite Switch](https://github.com/generative-computing/granite-switch), as a
 vLLM plugin. Ask a question about some text and get back probabilities, from the same server and
@@ -22,7 +22,7 @@ You need a Linux machine with an NVIDIA GPU. The 8b checkpoint fits on one 80 GB
 ### Container
 
 Release images are published to GitHub Container Registry as
-`ghcr.io/generative-computing/granite-switch-systemone` for linux/amd64 and linux/arm64, so one tag
+`ghcr.io/generative-computing/granite-switch-decision` for linux/amd64 and linux/arm64, so one tag
 works on both. `latest` is the newest release, and each release is also tagged with its version. The
 pull is about 9 GB and the image takes about 30 GB on disk (amd64 figures). You also need Docker and the NVIDIA container toolkit.
 
@@ -33,7 +33,7 @@ hf download ibm-granite/granite-switch-4.1-8b --local-dir /srv/models/granite-sw
 # Run the image
 docker run -d --name gss --gpus all --ipc=host -p 8000:8000 \
     -v /srv/models/granite-switch-4.1-8b:/repository:ro \
-    ghcr.io/generative-computing/granite-switch-systemone:0.1.3
+    ghcr.io/generative-computing/granite-switch-decision:0.2.0
 ```
 
 Loading takes a few minutes; follow it with `docker logs -f gss`. `--ipc=host` is vLLM's usual
@@ -41,7 +41,7 @@ setting for shared memory, and it matters most when you run with tensor parallel
 
 The ghcr package is currently private, so `docker pull` needs `docker login ghcr.io` with an account
 that has access. Until it is public, build the image yourself: clone this repository at a release tag
-and run `docker build -t granite-switch-systemone .`.
+and run `docker build -t granite-switch-decision .`.
 
 The image is `vllm/vllm-openai:v0.30.0` plus `granite-switch[audio]==0.1.1`, `transformers==5.17.0` and
 this plugin. It has no weights in it. It reads the checkpoint from `/repository` (override with
@@ -56,9 +56,9 @@ and `v0.1.0` was also served on 0.26 to 0.29, but nothing since has been checked
 
 ```bash
 pip install "granite-switch[vllm]==0.1.1" "transformers>=5.16"
-pip install "git+https://github.com/generative-computing/granite-switch-systemone@v0.1.3"
-export VLLM_PLUGINS=register_granite_switch,granite_switch_systemone
-export SYSTEMONE_INVOCATION_MARKER="### DECISION"
+pip install "git+https://github.com/generative-computing/granite-switch-decision@v0.2.0"
+export VLLM_PLUGINS=register_granite_switch,granite_switch_decision
+export GRANITE_SWITCH_DECISION_INVOCATION_MARKER="### DECISION"
 vllm serve ibm-granite/granite-switch-4.1-8b --served-model-name granite-switch \
     --dtype bfloat16 --attention-config.flash_attn_version=2 --enable-prompt-tokens-details
 ```
@@ -88,7 +88,7 @@ python3 scripts/e2e_check.py --base-url http://localhost:8000
 `e2e_check.py` needs only the standard library and works against any host, so run it from a checkout of
 this repository. It exits 0 when the wire formats on both routes, route parity, chat and prefix-cache
 sharing all pass. If the server stops at startup, its log names the cause: an unknown
-`SYSTEMONE_ADAPTER_NAME`, a checkpoint with no `decision` adapter, or an invocation marker that does not
+`GRANITE_SWITCH_DECISION_ADAPTER_NAME`, a checkpoint with no `decision` adapter, or an invocation marker that does not
 activate the adapter in the chat template.
 
 ## Make a request
@@ -115,7 +115,7 @@ The server listens on `0.0.0.0` and, as shipped, asks for no credentials on any 
 gateway that authenticates callers, or turn on vLLM's `--api-key`, which `serve.sh` passes through:
 
 ```bash
-docker run -d --gpus all --ipc=host -p 8000:8000 -v … granite-switch-systemone --api-key "$KEY"
+docker run -d --gpus all --ipc=host -p 8000:8000 -v … granite-switch-decision --api-key "$KEY"
 ```
 
 In vLLM 0.30.0 that key check covers every `/v1` route, including `/v1/decisions` and
@@ -123,7 +123,7 @@ In vLLM 0.30.0 that key check covers every `/v1` route, including `/v1/decisions
 have not run it against a live server, so after enabling it, confirm that an unauthenticated `curl` to
 `/v1/decisions` returns 401.
 
-If the server also handles chat, set `SYSTEMONE_MAX_CONCURRENT_REQUESTS` (8 to 32 is a sensible
+If the server also handles chat, set `GRANITE_SWITCH_DECISION_MAX_CONCURRENT_REQUESTS` (8 to 32 is a sensible
 range). It is off by default, and without it a burst of decisions slowed chat p50 from 235 ms to
 1,088 ms in our load test (see [docs/STATUS.md](docs/STATUS.md)).
 
@@ -134,14 +134,14 @@ speech input in their configuration. Loading a speech model slows startup and de
 so `serve.sh` switches it off (`--hf-overrides '{"asr_enabled": false}'`). The checkpoint then starts
 with nothing else to download, and `/v1/chat/completions` accepts no audio.
 
-To turn it on, set `SYSTEMONE_SPEECH_INPUT=1`. The image runs with the Hugging Face Hub offline, so the
+To turn it on, set `GRANITE_SWITCH_DECISION_SPEECH_INPUT=1`. The image runs with the Hugging Face Hub offline, so the
 speech model
 ([`ibm-granite/granite-speech-5.0-470m-turboctc`](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc),
 about 1 GB) has to be available. Any one of these works:
 
 - Use an image with the model built in: the `-asr` tag of a release (releases made with the current
   workflow publish one), or build it yourself:
-  `docker build --build-arg WITH_ASR=1 -t granite-switch-systemone:asr .`
+  `docker build --build-arg WITH_ASR=1 -t granite-switch-decision:asr .`
 - Mount a Hub cache that holds the model and set `HF_HUB_CACHE` to that directory.
 - Set `HF_HUB_OFFLINE=0` so the model downloads at startup.
 
@@ -168,12 +168,12 @@ name is passed on to `vllm serve`.
 | `MAX_MODEL_LEN` | `32768` | Longest prompt plus output. |
 | `GPU_MEMORY_UTILIZATION` | `0.90` | Share of GPU memory vLLM may use. |
 | `TENSOR_PARALLEL_SIZE` | every visible GPU | GPUs to split the model across. |
-| `SYSTEMONE_ADAPTER_NAME` | the only adapter, else `decision` | Which adapter answers. Checked against the checkpoint at startup; an unknown name stops the server. |
-| `SYSTEMONE_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. It is required: with a wrong marker the chat template activates the adapter in the wrong place without raising an error. |
-| `SYSTEMONE_SPEECH_INPUT` | `0` | `1` keeps speech input; see [Speech input](#speech-input-optional). |
-| `SYSTEMONE_MAX_CONCURRENT_REQUESTS` | `0` (no cap) | Decision requests allowed in flight across both routes. Past the cap a request gets 503 at once, so a burst cannot queue ahead of chat. |
-| `SYSTEMONE_RENDERER` | `granite_switch_systemone.renderer:render` | A `module:function` that builds the prompt and label ids, for an adapter trained differently. |
-| `SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT` | `0` | Experimental, may be removed. `1` adds the trained decision-engine system prompt, as used for the model card's published score. It stops chat requests sharing the decision prefix cache. |
+| `GRANITE_SWITCH_DECISION_ADAPTER_NAME` | the only adapter, else `decision` | Which adapter answers. Checked against the checkpoint at startup; an unknown name stops the server. |
+| `GRANITE_SWITCH_DECISION_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. It is required: with a wrong marker the chat template activates the adapter in the wrong place without raising an error. |
+| `GRANITE_SWITCH_DECISION_SPEECH_INPUT` | `0` | `1` keeps speech input; see [Speech input](#speech-input-optional). |
+| `GRANITE_SWITCH_DECISION_MAX_CONCURRENT_REQUESTS` | `0` (no cap) | Decision requests allowed in flight across both routes. Past the cap a request gets 503 at once, so a burst cannot queue ahead of chat. |
+| `GRANITE_SWITCH_DECISION_RENDERER` | `granite_switch_decision.renderer:render` | A `module:function` that builds the prompt and label ids, for an adapter trained differently. |
+| `GRANITE_SWITCH_DECISION_EXPERIMENTAL_SYSTEM_PROMPT` | `0` | Experimental, may be removed. `1` adds the trained decision-engine system prompt, as used for the model card's published score. It stops chat requests sharing the decision prefix cache. |
 
 Both routes share these settings; nothing is configured per route.
 
@@ -201,7 +201,7 @@ caching stays at vLLM's default, which is on.
 
 On every decision request the plugin itself sets `temperature=0.0`, `max_completion_tokens=1`,
 `logprob_token_ids` (the option labels' token ids, read exactly rather than from the top-K) and
-`chat_template_kwargs={"adapter_name": <SYSTEMONE_ADAPTER_NAME>}`. Callers cannot change them. vLLM
+`chat_template_kwargs={"adapter_name": <GRANITE_SWITCH_DECISION_ADAPTER_NAME>}`. Callers cannot change them. vLLM
 caps `logprob_token_ids` at 128 ids, so a `choice` with more options runs as several requests over the
 same prompt, served from the prefix cache.
 
@@ -249,7 +249,7 @@ absent. You can drop it once you move to a release that has them. The upstream e
 details: this plugin follows jev's format and OpenAI's schema as published.
 
 The plugin refuses to start if either path is already registered, so on a vLLM that has the upstream
-endpoints it fails at startup and does not silently pick one. Remove `granite_switch_systemone` from
+endpoints it fails at startup and does not silently pick one. Remove `granite_switch_decision` from
 `VLLM_PLUGINS` there. vLLM 0.32 mounts its own `/v1/systemone` (newer versions add `/v1/decisions`).
 Neither knows Switch adapters, and granite-switch 0.1.1 does not support those versions yet.
 
@@ -263,7 +263,7 @@ migration is a Granite Switch read strategy, and `renderer.render(tok, state, in
 
 The pip path is what most of the live testing used. The container image is lightly tested: it builds
 for amd64 and arm64, with and without the speech model, and the packages and plugin entry points were checked
-inside it. The published `0.1.3` image was served on H100 GPUs with only the checkpoint mounted and
+inside it. The published `0.1.3` image (then named `granite-switch-systemone`) was served on H100 GPUs with only the checkpoint mounted and
 speech input off, the 8b on one GPU and the 30b on two with tensor parallelism, and the wire,
 robustness and accuracy checks passed. That was run under enroot and not with `docker run`. The arm64 image was also served with `docker run` on an NVIDIA GB10 (the 8b, default image). The arm64 `-asr` image was also served with `docker run` and passed the speech check; see
 [docs/STATUS.md](docs/STATUS.md) for exactly what was and was not run. If you run the image, treat the

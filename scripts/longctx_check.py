@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Long-context checks for a live granite-switch-systemone server started with the
+"""Long-context checks for a live granite-switch-decision server started with the
 8b checkpoint and --max-model-len 131072 (the checkpoint's maximum). Needs the
 checkpoint's tokenizer (transformers, unlike the other scripts, which are stdlib-only)
 to size the probe states. The 262,144-token danger-zone cap clamps to --max-model-len,

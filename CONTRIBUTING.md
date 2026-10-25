@@ -1,4 +1,4 @@
-# Contributing to granite-switch-systemone
+# Contributing to granite-switch-decision
 
 ## Getting Started
 
@@ -6,8 +6,8 @@
 2. Clone your fork and install the development dependencies:
 
    ```bash
-   git clone https://github.com/<your-username>/granite-switch-systemone.git
-   cd granite-switch-systemone
+   git clone https://github.com/<your-username>/granite-switch-decision.git
+   cd granite-switch-decision
    pip install -e ".[dev]"
    ```
 

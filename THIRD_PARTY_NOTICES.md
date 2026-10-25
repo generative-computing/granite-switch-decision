@@ -9,7 +9,7 @@ licence shown.
   (`src/system_one_adapter/_utils/confidence_metrics.py` and
   `tests/utils/test_confidence_metrics.py`).
 - Used in: `_choice_confidence`, `_score_confidence` and `_normalize_probs` in
-  `src/granite_switch_systemone/plugin.py` (adapted), and the confidence test vectors in
+  `src/granite_switch_decision/plugin.py` (adapted), and the confidence test vectors in
   `tests/test_plugin.py`.
 
 ```

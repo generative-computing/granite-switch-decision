@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from granite_switch_systemone import preflight
+from granite_switch_decision import preflight
 
 DEFAULT = preflight.DEFAULT_ASR_MODEL_ID
 
@@ -99,7 +99,7 @@ def test_hub_cache_dir_follows_huggingface_hub_precedence(env, expected):
 
 def test_main_exits_1_and_says_what_to_do(tmp_path, monkeypatch, capsys):
     model_dir = _checkpoint(tmp_path, asr_enabled=True, asr_model_id=None)
-    monkeypatch.setenv("SYSTEMONE_PREFLIGHT_AUDIO_MODULES", "")  # this test is about the speech model
+    monkeypatch.setenv("GRANITE_SWITCH_DECISION_PREFLIGHT_AUDIO_MODULES", "")  # this test is about the speech model
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "cache"))
     assert preflight.main([str(model_dir)]) == 1
@@ -107,7 +107,7 @@ def test_main_exits_1_and_says_what_to_do(tmp_path, monkeypatch, capsys):
     assert DEFAULT in err
     assert str(tmp_path / "cache") in err
     assert "WITH_ASR=1" in err
-    assert "SYSTEMONE_SPEECH_INPUT" in err
+    assert "GRANITE_SWITCH_DECISION_SPEECH_INPUT" in err
     assert "HF_HUB_OFFLINE=0" in err
 
 
