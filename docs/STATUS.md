@@ -2,16 +2,23 @@
 
 How to run each test is in [TESTING.md](TESTING.md).
 
-Last updated 2026-10-23. "Live" means a real server on H100s: granite-switch 0.1.1,
+Last updated 2026-10-25. "Live" means a real server on H100s: granite-switch 0.1.1,
 transformers 5.17, vLLM 0.26.0 / 0.27.1 / 0.28.0 / 0.29.0 / 0.30.0 as noted per row,
 and `ibm-granite/granite-switch-4.1-8b` unless a row names another checkpoint.
+
+The package, image and environment variables were renamed in 0.2.0 (`granite-switch-systemone` to
+`granite-switch-decision`, `SYSTEMONE_*` to `DECISION_*`). Every row below was run at 0.1.3 or earlier
+under the old names, and the rows are written with the new ones. After the rename only the unit and
+spec suites, the wheel contents, and the live battery on the 8b (`e2e_check`, `probe_check`,
+`accuracy_check`, one H100, pip install) were repeated, with the same results. The 30b, the image under
+`docker run`, arm64 and speech were not.
 
 ## Tested
 
 | Area | How | Result |
 |---|---|---|
 | Unit and route tests | `pytest`, engine stubbed, in CI | pass |
-| `/v1/decisions` against OpenAI's OpenAPI schema | `tests/test_openai_spec.py` (42 cases), plus the same request set live | pass, with the exceptions listed in the README |
+| `/v1/decisions` against OpenAI's OpenAPI schema | `tests/test_openai_spec.py` (41 cases), plus the same request set live | pass, with the exceptions listed in the README |
 | `/v1/systemone` against jev's wire format | `tests/test_systemone_spec.py` (24 cases) against `typesafe-sdk`'s generated models, stubbed | pass; the plugin also rejects unknown fields, which jev's format allows |
 | Live wire battery | `scripts/e2e_check.py` (11 checks) | 11/11 |
 | Prompt rendering | server prompt token counts against an offline render with the checkpoint's tokenizer and chat template | identical |
@@ -23,7 +30,7 @@ and `ibm-granite/granite-switch-4.1-8b` unless a row names another checkpoint.
 | FlashAttention 3 | FA2 and FA3 servers side by side: the 800-item comparison, 40 cached one-token reads (the case in granite-switch#139), load at 8 and 32 clients | no difference beyond batching noise in answers or speed; FA2 kept in `serve.sh` while #139 is open |
 | Load | 1 to 128 concurrent clients, three-question requests | about 140 requests/s plateau, no errors |
 | Plugin-only install | the README's steps in a fresh environment, then its `vllm serve` command and the e2e battery | pass |
-| Install from this repository | `pip install git+https://github.com/generative-computing/granite-switch-decision` into a fresh venv, over HTTPS and SSH with authenticated access while the repository was private, with the entry-point check and the unit and spec suites against the installed copy from a neutral directory (184 tests, pass); then anonymously (no git config, credentials or SSH agent) once public, at v0.1.2 | the anonymous install resolved and registered the `vllm.endpoint_plugins` entry point; the suites were not rerun on it |
+| Install from this repository | `pip install git+https://github.com/generative-computing/granite-switch-systemone` (the repository's name then) into a fresh venv, over HTTPS and SSH with authenticated access while the repository was private, with the entry-point check and the unit and spec suites against the installed copy from a neutral directory (184 tests, pass); then anonymously (no git config, credentials or SSH agent) once public, at v0.1.2 | the anonymous install resolved and registered the `vllm.endpoint_plugins` entry point; the suites were not rerun on it |
 | vLLM 0.26.0, 0.27.1, 0.28.0, 0.29.0 live (at `v0.1.0` only; not repeated for later changes) | one server per version on one H100 (torch 2.11.0+cu130 on 0.26, torch 2.13.0+cu130 on the rest): the e2e battery, `probe_check`, `test_decisions_e2e`, `test_prefix_sharing`, and the unit suite under each version's own venv | 11/11 e2e and every suite passes on all four versions |
 | The 30b checkpoint | `granite-switch-4.1-30b` on vLLM 0.30.0, `--tensor-parallel-size 2` on two H100s: the full battery | pass |
 | Tensor parallelism | the 8b with `--tensor-parallel-size 2`: the full battery | pass |
