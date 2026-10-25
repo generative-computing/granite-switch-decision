@@ -6,7 +6,7 @@
     \nReply with exactly one option label.
 
 answered by the next token, read as a softmax over the labels' logits. This matches the
-layout on the model card. `SYSTEMONE_INVOCATION_MARKER` has no default: if the marker is
+layout on the model card. `DECISION_INVOCATION_MARKER` has no default: if the marker is
 wrong, the chat template activates the adapter in a different place without raising.
 """
 
@@ -18,8 +18,8 @@ from collections.abc import Callable
 
 PLAIN_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-_INVOCATION_MARKER_ENV = "SYSTEMONE_INVOCATION_MARKER"
-_SYSTEM_PROMPT_ENV = "SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT"
+_INVOCATION_MARKER_ENV = "DECISION_INVOCATION_MARKER"
+_SYSTEM_PROMPT_ENV = "DECISION_EXPERIMENTAL_SYSTEM_PROMPT"
 # The trained system prompt, used for the model card's published score. Off by default so
 # a decision's state turn can share the prefix cache with chat; experimental.
 SYSTEM_PROMPT = (

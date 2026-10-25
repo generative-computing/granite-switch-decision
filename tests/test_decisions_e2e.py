@@ -5,7 +5,7 @@ probabilities. Both routes share the engine path by construction (see
 tests/test_decisions.py's parity tests); this checks the wiring end to end, including the
 routes' registration on the real app.
 
-  SYSTEMONE_BASE_URL=http://host:8000 python3 -m pytest tests/test_decisions_e2e.py -v
+  DECISION_BASE_URL=http://host:8000 python3 -m pytest tests/test_decisions_e2e.py -v
 """
 
 import json
@@ -15,9 +15,9 @@ import urllib.request
 
 import pytest
 
-BASE = os.environ.get("SYSTEMONE_BASE_URL")
+BASE = os.environ.get("DECISION_BASE_URL")
 
-pytestmark = pytest.mark.skipif(not BASE, reason="SYSTEMONE_BASE_URL not set")
+pytestmark = pytest.mark.skipif(not BASE, reason="DECISION_BASE_URL not set")
 
 STATE = "My payouts have failed three times. The bank says everything is fine."
 # Engine reads are not bit-identical between batched and solo requests (measured up to 0.04).

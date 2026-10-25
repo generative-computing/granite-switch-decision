@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Checks to run before `vllm serve` starts; `serve.sh` calls this module when
-SYSTEMONE_SPEECH_INPUT=1 (with speech input off the speech model is never loaded).
+DECISION_SPEECH_INPUT=1 (with speech input off the speech model is never loaded).
 
 Granite Switch's audio processor loads a speech model while the engine profiles memory. The 8b
 and 30b checkpoints enable it (`asr_enabled`) without naming a model, so granite-switch falls
@@ -8,7 +8,7 @@ back to a default one. The container runs with the Hub offline, so a speech mode
 the cache stops the engine deep in startup with a Hub lookup error that does not say what to do.
 This check fails earlier and names the cause and the fixes.
 
-    python3 -m granite_switch_systemone.preflight /repository
+    python3 -m granite_switch_decision.preflight /repository
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from pathlib import Path
 # passes /health, then answers every audio request with HTTP 500 "install vllm[audio]".
 AUDIO_MODULES = ("av", "scipy", "soundfile", "soxr")
 # Test hook: a comma-separated list of the modules to treat as installed (an empty value checks nothing).
-_AUDIO_MODULES_ENV = "SYSTEMONE_PREFLIGHT_AUDIO_MODULES"
+_AUDIO_MODULES_ENV = "DECISION_PREFLIGHT_AUDIO_MODULES"
 
 # granite-switch 0.1.1's DEFAULT_ASR_MODEL_ID (granite_switch/vllm/audio/asr.py), used when the
 # checkpoint's `asr_model_id` is null. tests/test_preflight.py compares it with the installed copy.
@@ -78,17 +78,17 @@ def missing_audio_modules(model_dir: Path) -> list[str]:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
-        print("usage: python3 -m granite_switch_systemone.preflight MODEL_DIR", file=sys.stderr)
+        print("usage: python3 -m granite_switch_decision.preflight MODEL_DIR", file=sys.stderr)
         return 2
     modules = missing_audio_modules(Path(argv[0]))
     if modules:
         print(
-            "granite-switch-systemone: speech input is on, but these audio libraries are not installed: "
+            "granite-switch-decision: speech input is on, but these audio libraries are not installed: "
             f"{', '.join(modules)}.\n"
             "Without them the server starts and passes /health, then answers every audio request with "
             'HTTP 500 "Please install vllm[audio]". Install vllm[audio] (or granite-switch[audio]) into '
-            "this environment, or use a release image, which includes them. Leave SYSTEMONE_SPEECH_INPUT "
-            "unset or 0 if you do not need audio.",
+            "this environment, or use a release image, which includes them. "
+            "Leave DECISION_SPEECH_INPUT unset or 0 if you do not need audio.",
             file=sys.stderr,
         )
         return 1
@@ -96,11 +96,11 @@ def main(argv: list[str]) -> int:
     if model_id is None:
         return 0
     print(
-        f"granite-switch-systemone: this checkpoint enables speech input (asr_enabled in config.json) and needs\n"
+        f"granite-switch-decision: this checkpoint enables speech input (asr_enabled in config.json) and needs\n"
         f'the speech model "{model_id}", but the Hub is offline and it is not in the cache at\n'
         f"{hub_cache_dir(os.environ)}. Do one of:\n"
         "  - use an image built with --build-arg WITH_ASR=1, which bakes the model in\n"
-        "  - leave speech input off (SYSTEMONE_SPEECH_INPUT unset or 0), which decisions do not need\n"
+        "  - leave speech input off (DECISION_SPEECH_INPUT unset or 0), which decisions do not need\n"
         "  - mount a cache that holds it and point HF_HUB_CACHE at that directory\n"
         "  - set HF_HUB_OFFLINE=0 so the model can be downloaded at startup",
         file=sys.stderr,

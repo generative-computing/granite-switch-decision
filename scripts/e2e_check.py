@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""End-to-end check for a live granite-switch-systemone server.
+"""End-to-end check for a live granite-switch-decision server.
 
 Runs the full wire-format battery against any deployment of this plugin
 (local, container or remote), using only the Python standard library, so it
@@ -511,7 +511,7 @@ def main() -> int:
     parser.add_argument(
         "--system-prompt",
         action="store_true",
-        help="the server runs with SYSTEMONE_EXPERIMENTAL_SYSTEM_PROMPT=1 (changes the cache expectations)",
+        help="the server runs with DECISION_EXPERIMENTAL_SYSTEM_PROMPT=1 (changes cache expectations)",
     )
     args = parser.parse_args()
 

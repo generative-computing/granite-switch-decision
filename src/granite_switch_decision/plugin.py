@@ -5,7 +5,7 @@ Both routes validate their own wire format, translate to one internal question s
 answer through `openai_serving_chat.create_chat_completion`, the same engine call
 `/v1/chat/completions` uses. Each question is one exact read of its option labels'
 logprobs (`logprob_token_ids`, chunked above vLLM's 128-id cap). The adapter-specific
-prompt is built by the renderer named in `SYSTEMONE_RENDERER`.
+prompt is built by the renderer named in `DECISION_RENDERER`.
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-_RENDERER_ENV = "SYSTEMONE_RENDERER"
-_DEFAULT_RENDERER = "granite_switch_systemone.renderer:render"
-_ADAPTER_NAME_ENV = "SYSTEMONE_ADAPTER_NAME"
+_RENDERER_ENV = "DECISION_RENDERER"
+_DEFAULT_RENDERER = "granite_switch_decision.renderer:render"
+_ADAPTER_NAME_ENV = "DECISION_ADAPTER_NAME"
 _DEFAULT_ADAPTER_NAME = "decision"
 
 # jev: request body <= 32 MiB.
@@ -52,13 +52,13 @@ DANGER_ZONE_HEADER = "typesafe-danger-zone-long-context"
 MAX_LABEL_OPTIONS = 128
 # Questions per request on both routes (OpenAI's limit on /v1/decisions).
 MAX_QUESTIONS = 200
-_MAX_CONCURRENT_ENV = "SYSTEMONE_MAX_CONCURRENT_REQUESTS"
+_MAX_CONCURRENT_ENV = "DECISION_MAX_CONCURRENT_REQUESTS"
 # Engine reads in flight per request, so one wide request cannot flood the engine.
 MAX_READS_PER_REQUEST = 16
 
 
 def _load_renderer():
-    """Resolve `SYSTEMONE_RENDERER` to a callable at plugin init. It is loaded by name, so
+    """Resolve `DECISION_RENDERER` to a callable at plugin init. It is loaded by name, so
     this module never imports the configured renderer directly."""
     path = os.environ.get(_RENDERER_ENV, _DEFAULT_RENDERER)
     if ":" not in path:
@@ -73,7 +73,7 @@ def _load_renderer():
 
 def _resolve_adapter_name(chat) -> str:
     """The decision adapter's name, checked against the checkpoint's own adapter list:
-    `SYSTEMONE_ADAPTER_NAME` if set, else the only adapter, else one named `decision`.
+    `DECISION_ADAPTER_NAME` if set, else the only adapter, else one named `decision`.
     A wrong name must fail startup: the chat template silently activates no adapter
     for a name it does not know."""
     adapter_names = getattr(chat.model_config.hf_config, "adapter_names", None) or []
@@ -609,7 +609,8 @@ def _check_activation(tok, renderer, adapter_name: str) -> None:
     if full.count(control_id) != 1 or not in_conversation:
         raise RuntimeError(
             f"a probe decision prompt does not carry exactly one {control} inside the question turn: "
-            "check SYSTEMONE_INVOCATION_MARKER and SYSTEMONE_ADAPTER_NAME against the checkpoint's chat template"
+            "check DECISION_INVOCATION_MARKER and DECISION_ADAPTER_NAME "
+            "against the checkpoint's chat template"
         )
 
 
@@ -793,11 +794,11 @@ async def _answer_all(state, state_value: Any, questions: list[tuple[str, Questi
                 key,
                 q,
                 state_value,
-                state.systemone_chat,
-                state.systemone_tokenizer,
-                state.systemone_served_model,
-                state.systemone_adapter_name,
-                state.systemone_renderer,
+                state.decision_chat,
+                state.decision_tokenizer,
+                state.decision_served_model,
+                state.decision_adapter_name,
+                state.decision_renderer,
                 reads,
             )
         )
@@ -896,7 +897,7 @@ def _internal_answer_to_decisions(
 
 async def _handle_systemone(raw_request: Request) -> Response:
     state = raw_request.app.state
-    chat = getattr(state, "systemone_chat", None)
+    chat = getattr(state, "decision_chat", None)
     if chat is None:
         return _error(HTTPStatus.NOT_IMPLEMENTED, "the model does not support generation")
 
@@ -922,8 +923,8 @@ async def _handle_systemone(raw_request: Request) -> Response:
     danger_zone = raw_request.headers.get(DANGER_ZONE_HEADER, "").strip().lower() == "true"
     try:
         _enforce_context_limits(
-            state.systemone_tokenizer,
-            state.systemone_max_model_len,
+            state.decision_tokenizer,
+            state.decision_max_model_len,
             danger_zone,
             req.state,
             req.questions,
@@ -931,7 +932,7 @@ async def _handle_systemone(raw_request: Request) -> Response:
     except ValueError as e:
         return _error(HTTPStatus.BAD_REQUEST, str(e))
 
-    async with state.systemone_limiter.slot() as admitted:
+    async with state.decision_limiter.slot() as admitted:
         if not admitted:
             return _error(HTTPStatus.SERVICE_UNAVAILABLE, _BUSY)
         try:
@@ -948,7 +949,7 @@ async def _handle_systemone(raw_request: Request) -> Response:
 
     return JSONResponse(
         content={
-            "model": state.systemone_served_model,
+            "model": state.decision_served_model,
             "answers": answers,
             "usage": {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens},
         }
@@ -958,7 +959,7 @@ async def _handle_systemone(raw_request: Request) -> Response:
 async def _handle_decisions(raw_request: Request) -> Response:
     """POST /v1/decisions: OpenAI's wire format over the same engine path as /v1/systemone."""
     state = raw_request.app.state
-    chat = getattr(state, "systemone_chat", None)
+    chat = getattr(state, "decision_chat", None)
     if chat is None:
         return _openai_error(HTTPStatus.NOT_IMPLEMENTED, "the model does not support generation")
 
@@ -993,8 +994,8 @@ async def _handle_decisions(raw_request: Request) -> Response:
 
     try:
         _enforce_context_limits(
-            state.systemone_tokenizer,
-            state.systemone_max_model_len,
+            state.decision_tokenizer,
+            state.decision_max_model_len,
             False,  # no danger-zone concept on the OpenAI route
             state_text,
             {key: internal for key, internal, _ in translated},
@@ -1003,7 +1004,7 @@ async def _handle_decisions(raw_request: Request) -> Response:
         return _openai_error(HTTPStatus.BAD_REQUEST, str(e))
 
     work = _answer_all(state, state_text, [(key, internal) for key, internal, _ in translated])
-    async with state.systemone_limiter.slot() as admitted:
+    async with state.decision_limiter.slot() as admitted:
         if not admitted:
             work.close()
             return _openai_error(HTTPStatus.SERVICE_UNAVAILABLE, _BUSY)
@@ -1023,8 +1024,8 @@ async def _handle_decisions(raw_request: Request) -> Response:
     return JSONResponse(
         content={
             "model": req.model
-            if req.model in getattr(state, "systemone_served_names", ())
-            else state.systemone_served_model,
+            if req.model in getattr(state, "decision_served_names", ())
+            else state.decision_served_model,
             "answers": answers,
             "usage": {
                 "input_tokens": usage.input_tokens,
@@ -1062,11 +1063,11 @@ def _route_exists(app: FastAPI, path: str) -> bool:
     return any(route.matches(scope)[0] == Match.FULL for route in app.routes)
 
 
-class SystemOnePlugin:
+class DecisionPlugin:
     """`vllm.endpoint_plugins` entry point (see module docstring). Loaded only when
-    `granite_switch_systemone` is in `VLLM_PLUGINS`; see this repo's README and Dockerfile."""
+    `granite_switch_decision` is in `VLLM_PLUGINS`; see this repo's README and Dockerfile."""
 
-    name = "granite_switch_systemone"
+    name = "granite_switch_decision"
     required_tasks: tuple[str, ...] | None = ("generate",)
 
     def attach_router(self, app: FastAPI) -> None:
@@ -1075,7 +1076,7 @@ class SystemOnePlugin:
         taken = sorted(path for path in _ROUTE_PATHS if _route_exists(app, path))
         if taken:
             raise RuntimeError(
-                f"granite_switch_systemone would shadow routes already registered by vLLM: {', '.join(taken)}. "
+                f"granite_switch_decision would shadow routes already registered by vLLM: {', '.join(taken)}. "
                 "Remove it from VLLM_PLUGINS, or use vLLM's own endpoints."
             )
         app.include_router(router)
@@ -1083,20 +1084,20 @@ class SystemOnePlugin:
     async def init_state(self, engine_client: EngineClient | None, state: State, args: Namespace) -> None:
         chat = getattr(state, "openai_serving_chat", None)
         if chat is None:
-            _log.warning("granite_switch_systemone: no chat serving object; decision routes return 501")
+            _log.warning("granite_switch_decision: no chat serving object; decision routes return 501")
             return
-        state.systemone_chat = chat
-        state.systemone_tokenizer = chat.renderer.tokenizer
-        state.systemone_max_model_len = chat.model_config.max_model_len
-        state.systemone_served_names = list(args.served_model_name or [args.model])
-        state.systemone_served_model = state.systemone_served_names[0]
+        state.decision_chat = chat
+        state.decision_tokenizer = chat.renderer.tokenizer
+        state.decision_max_model_len = chat.model_config.max_model_len
+        state.decision_served_names = list(args.served_model_name or [args.model])
+        state.decision_served_model = state.decision_served_names[0]
         _warn_if_speculative(args)
         # A bad adapter name or renderer must stop the server, not serve wrong answers.
-        state.systemone_adapter_name = _resolve_adapter_name(chat)
-        state.systemone_renderer = _load_renderer()
-        state.systemone_limiter = _Limiter(_max_concurrent())
-        _check_renderer_settings(state.systemone_renderer)
-        _check_activation(state.systemone_tokenizer, state.systemone_renderer, state.systemone_adapter_name)
+        state.decision_adapter_name = _resolve_adapter_name(chat)
+        state.decision_renderer = _load_renderer()
+        state.decision_limiter = _Limiter(_max_concurrent())
+        _check_renderer_settings(state.decision_renderer)
+        _check_activation(state.decision_tokenizer, state.decision_renderer, state.decision_adapter_name)
 
 
 def _check_renderer_settings(renderer) -> None:
@@ -1107,5 +1108,5 @@ def _check_renderer_settings(renderer) -> None:
         check()
 
 
-def register() -> SystemOnePlugin:
-    return SystemOnePlugin()
+def register() -> DecisionPlugin:
+    return DecisionPlugin()

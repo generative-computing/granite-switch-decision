@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Speech-input smoke test for a live granite-switch-systemone server started with SYSTEMONE_SPEECH_INPUT=1.
+"""Speech-input smoke test for a live granite-switch-decision server started with
+DECISION_SPEECH_INPUT=1.
 
 Standard library only. Sends short spoken clips to /v1/chat/completions as `input_audio` and checks
 that the model heard them: the reply has to repeat most of the words that were spoken. Decisions take

@@ -2,11 +2,11 @@
 # /v1/decisions and /v1/systemone plugin routes, on one engine and one KV cache.
 # The checkpoint is not in the image; mount it at $MODEL_DIR (default /repository).
 #
-#   docker build -t <registry>/granite-switch-systemone:<tag> .
+#   docker build -t <registry>/granite-switch-decision:<tag> .
 #
 # The audio libraries are in every build. WITH_ASR=1 also bakes in the speech model (see
-# ASR_MODEL and ASR_REVISION); serve.sh keeps speech off unless SYSTEMONE_SPEECH_INPUT=1.
-#   docker build --build-arg WITH_ASR=1 -t <registry>/granite-switch-systemone:<tag>-asr .
+# ASR_MODEL and ASR_REVISION); serve.sh keeps speech off unless DECISION_SPEECH_INPUT=1.
+#   docker build --build-arg WITH_ASR=1 -t <registry>/granite-switch-decision:<tag>-asr .
 #
 # vLLM 0.30 is the version tested live. The default tag is the CUDA 13 build (torch
 # 2.13.0+cu130), the stack the tests ran. The -cu129 tag ships torch 2.14.0, which the
@@ -42,17 +42,17 @@ RUN if [ "$WITH_ASR" = "1" ]; then \
     fi
 ENV HF_HUB_CACHE=/opt/hf-cache HF_HUB_OFFLINE=1
 
-# The plugin: a vllm.endpoint_plugins entry point (see src/granite_switch_systemone/plugin.py).
-COPY pyproject.toml README.md /opt/granite-switch-systemone/
-COPY src /opt/granite-switch-systemone/src
-RUN uv pip install --system --no-deps /opt/granite-switch-systemone
+# The plugin: a vllm.endpoint_plugins entry point (see src/granite_switch_decision/plugin.py).
+COPY pyproject.toml README.md /opt/granite-switch-decision/
+COPY src /opt/granite-switch-decision/src
+RUN uv pip install --system --no-deps /opt/granite-switch-decision
 
 COPY serve.sh /usr/local/bin/serve.sh
 RUN chmod +x /usr/local/bin/serve.sh
 # Endpoint plugins load only when VLLM_PLUGINS names them, and setting it stops vLLM loading
 # any others, so register_granite_switch has to be listed too.
-ENV VLLM_PLUGINS=register_granite_switch,granite_switch_systemone \
-    SYSTEMONE_ADAPTER_NAME=decision \
-    SYSTEMONE_INVOCATION_MARKER="### DECISION"
+ENV VLLM_PLUGINS=register_granite_switch,granite_switch_decision \
+    DECISION_ADAPTER_NAME=decision \
+    DECISION_INVOCATION_MARKER="### DECISION"
 EXPOSE 8000
 ENTRYPOINT ["/usr/local/bin/serve.sh"]

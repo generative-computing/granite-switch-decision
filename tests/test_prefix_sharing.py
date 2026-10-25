@@ -13,22 +13,22 @@ state. They bound what the cache can reuse; the live `prefix_cache` check in
 If one of the "shares no full block" tests starts failing, the decision layout changed:
 that is a cache win, but the layout is no longer the trained one, so re-check accuracy.
 
-  SYSTEMONE_TOKENIZER=ibm-granite/granite-switch-4.1-8b python3 -m pytest tests/test_prefix_sharing.py -v
+  DECISION_TOKENIZER=ibm-granite/granite-switch-4.1-8b python3 -m pytest tests/test_prefix_sharing.py -v
 
 Needs `transformers` new enough for the checkpoint's tokenizer class (5.16 works);
-skipped when it is missing or SYSTEMONE_TOKENIZER is unset.
+skipped when it is missing or DECISION_TOKENIZER is unset.
 """
 
 import os
 
 import pytest
 
-from granite_switch_systemone import plugin, renderer
+from granite_switch_decision import plugin, renderer
 
 transformers = pytest.importorskip("transformers")
 
-TOKENIZER = os.environ.get("SYSTEMONE_TOKENIZER")
-pytestmark = pytest.mark.skipif(not TOKENIZER, reason="SYSTEMONE_TOKENIZER not set")
+TOKENIZER = os.environ.get("DECISION_TOKENIZER")
+pytestmark = pytest.mark.skipif(not TOKENIZER, reason="DECISION_TOKENIZER not set")
 
 BLOCK_SIZE = 16  # vLLM CacheConfig.DEFAULT_BLOCK_SIZE; serve.sh does not override it
 MARKER = "### DECISION"
@@ -51,7 +51,7 @@ def tok():
 
 @pytest.fixture(autouse=True)
 def _marker(monkeypatch):
-    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", MARKER)
+    monkeypatch.setenv("DECISION_INVOCATION_MARKER", MARKER)
 
 
 def _ids(tok, messages, add_generation_prompt=True, **template_kwargs):
@@ -133,7 +133,7 @@ def test_chat_with_its_own_system_prompt_shares_no_full_block(tok):
 
 def test_activation_probe_accepts_the_real_template_and_refuses_a_wrong_marker(tok, monkeypatch):
     plugin._check_activation(tok, renderer.render, "decision")
-    monkeypatch.setenv("SYSTEMONE_INVOCATION_MARKER", "## DECISION")
+    monkeypatch.setenv("DECISION_INVOCATION_MARKER", "## DECISION")
     with pytest.raises(RuntimeError, match="exactly one"):
         plugin._check_activation(tok, renderer.render, "decision")
 

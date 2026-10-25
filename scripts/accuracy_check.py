@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Accuracy check for a live granite-switch-systemone server, on public labelled data.
+"""Accuracy check for a live granite-switch-decision server, on public labelled data.
 
 e2e_check.py shows the server speaks the wire formats; this shows the answers are still
 good. It sends yes/no questions from the BoolQ validation split (google/boolq, CC BY-SA
