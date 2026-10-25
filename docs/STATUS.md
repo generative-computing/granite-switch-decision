@@ -6,12 +6,9 @@ Last updated 2026-10-25. "Live" means a real server on H100s: granite-switch 0.1
 transformers 5.17, vLLM 0.26.0 / 0.27.1 / 0.28.0 / 0.29.0 / 0.30.0 as noted per row,
 and `ibm-granite/granite-switch-4.1-8b` unless a row names another checkpoint.
 
-The package, image and environment variables were renamed in 0.2.0 (`granite-switch-systemone` to
-`granite-switch-decision`, `SYSTEMONE_*` to `DECISION_*`). Every row below was run at 0.1.3 or earlier
-under the old names, and the rows are written with the new ones. After the rename only the unit and
-spec suites, the wheel contents, and the live battery on the 8b (`e2e_check`, `probe_check`,
-`accuracy_check`, one H100, pip install) were repeated, with the same results. The 30b, the image under
-`docker run`, arm64 and speech were not.
+Renamed in 0.2.0 (`granite-switch-systemone` to `granite-switch-decision`, `SYSTEMONE_*` to `DECISION_*`).
+The rows below were run at 0.1.3 or earlier under the old names. After the rename we repeated only the unit
+and spec suites and the 8b battery (`e2e_check`, `probe_check`, `accuracy_check`, pip install, one H100).
 
 ## Tested
 
