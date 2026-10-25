@@ -443,18 +443,20 @@ def _enforce_context_limits(
     )
     state_text = _text_of(state) if state not in ("", None, {}, []) else "(empty)"
     state_tokens = _count_tokens(tok, state_text)
-    total = 0
+    # jev: a request is the state plus all its questions; a question is the state plus that question.
+    total = state_tokens
     for name, q in questions.items():
         options = q.criteria.items() if isinstance(q.criteria, dict) else enumerate(q.criteria or [])
         option_text = "\n".join(f"{key} {_text_of(desc)}" for key, desc in options)
-        n = state_tokens + _count_tokens(tok, f"{_text_of(q.instructions)}\n{option_text}")
+        question_tokens = _count_tokens(tok, f"{_text_of(q.instructions)}\n{option_text}")
+        n = state_tokens + question_tokens
         if n > per_question_cap:
             raise ValueError(
                 f"question {name!r} is approximately {n} tokens, exceeding the "
                 f"{per_question_cap}-token maximum context length per question "
                 f"(max_tokens_exceeded)"
             )
-        total += n
+        total += question_tokens
     if total > total_cap:
         raise ValueError(
             f"request is approximately {total} tokens total, exceeding the "

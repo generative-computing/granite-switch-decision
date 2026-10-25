@@ -430,6 +430,22 @@ def test_enforce_context_limits_total_message_matches_a_capacity_marker():
     assert any(marker in str(exc_info.value) for marker in _CAPACITY_MARKERS)
 
 
+def test_enforce_context_limits_counts_the_state_once_per_request():
+    """jev counts a request as the state plus all questions, not the state once per question.
+    37 short questions over a 5,000-token state are about 5,200 tokens, well under the 64k cap."""
+    tok = _FakeTok()
+    questions = {f"q{i}": sp.Question(type="noul", instructions="is it urgent now ok") for i in range(37)}
+    sp._enforce_context_limits(tok, 131072, False, "state " * 5000, questions)  # must not raise
+
+
+def test_enforce_context_limits_still_rejects_a_request_that_is_over_the_cap():
+    """Each question fits (20,000 + 10,000), but the state plus all five is 70,000 tokens."""
+    tok = _FakeTok()
+    questions = {f"q{i}": sp.Question(type="noul", instructions="word " * 10_000) for i in range(5)}
+    with pytest.raises(ValueError, match="per request"):
+        sp._enforce_context_limits(tok, 131072, False, "state " * 20_000, questions)
+
+
 def test_enforce_context_limits_accepts_small_request():
     tok = _FakeTok()
     q = sp.Question(type="noul", instructions="a short question")
