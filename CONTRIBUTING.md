@@ -67,8 +67,8 @@ unsigned commits fail before they are pushed.
 - New behaviour needs a test. [docs/TESTING.md](docs/TESTING.md) records what each
   existing test covers
 - Wire-format behaviour is pinned against the published OpenAI and TypeSafe schemas;
-  if you change a route's shape, update the spec tests and the deliberate-exceptions
-  list in the README together
+  if you change a route's shape, update the spec tests and the README's list of
+  unsupported requests together
 
 ## Code of Conduct
 

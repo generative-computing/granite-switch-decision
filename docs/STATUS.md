@@ -15,14 +15,14 @@ and spec suites and the 8b battery (`e2e_check`, `probe_check`, `accuracy_check`
 | Area | How | Result |
 |---|---|---|
 | Unit and route tests | `pytest`, engine stubbed, in CI | pass |
-| `/v1/decisions` against OpenAI's OpenAPI schema | `tests/test_openai_spec.py` (41 cases), plus the same request set live | pass, with the exceptions listed in the README |
+| `/v1/decisions` against OpenAI's OpenAPI schema | `tests/test_openai_spec.py` (against the general-availability schema), plus the same request set live | pass, with the exceptions listed in the README |
 | `/v1/systemone` against jev's wire format | `tests/test_systemone_spec.py` (24 cases) against `typesafe-sdk`'s generated models, stubbed | pass; the plugin also rejects unknown fields, which jev's format allows |
-| Live wire battery | `scripts/e2e_check.py` (11 checks) | 11/11 |
+| Live wire battery | `scripts/e2e_check.py` (12 checks, including vLLM's request fields and `cache_salt`) | 12/12 |
 | Prompt rendering | server prompt token counts against an offline render with the checkpoint's tokenizer and chat template | identical |
 | Prefix-cache sharing | `tests/test_prefix_sharing.py`, and `cached_tokens` live, cross-checked with `/metrics` | as documented in the README |
 | Route parity | 800 labelled items through `/v1/decisions` and through the same prompt over chat completions | no item answers differently |
 | Escaping, size guard, disconnect cancellation, error shapes | live probes, now `scripts/probe_check.py` | as documented in the README |
-| Question cap and `DECISION_MAX_CONCURRENT_REQUESTS` | live: 200 questions accepted, 201 rejected; a 32-request burst against a cap of 8 gave 8 accepted and 24 rejected with 503 | pass |
+| Question cap and `DECISION_MAX_CONCURRENT_REQUESTS` | live: 400 questions accepted, 401 rejected; a 32-request burst against a cap of 8 gave 8 accepted and 24 rejected with 503 | pass |
 | `DECISION_EXPERIMENTAL_SYSTEM_PROMPT=1` | live: the 800-item comparison and `e2e_check.py --system-prompt` | answers identical to the same prompt over chat completions; decisions about one state still share the cache, chat no longer does |
 | FlashAttention 3 | FA2 and FA3 servers side by side: the 800-item comparison, 40 cached one-token reads (the case in granite-switch#139), load at 8 and 32 clients | no difference beyond batching noise in answers or speed; FA2 kept in `serve.sh` while #139 is open |
 | Load | 1 to 128 concurrent clients, three-question requests | about 140 requests/s plateau, no errors |
@@ -72,6 +72,9 @@ show that the serving path is identical to the one that produced the card's figu
 
 ## Known gaps
 
+- **`/v1/decisions` covers OpenAI's schema for text only.** Images, developer, system and assistant
+  messages and tool calls get a 400, and `/v1/systemone` refuses request-level `instructions`. The adapter
+  reads one state turn and a question, and nothing else is known to work. The README lists each case.
 - **Speculative decoding is untested and may crash the engine.** Decision reads use
   `logprob_token_ids`; vLLM issue #42592 (fix #44727, open) crashes on that whenever a
   speculative-decoding request shares the batch. We have not run MTP, so whether the decision

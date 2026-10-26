@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Conformance of /v1/decisions to OpenAI's published OpenAPI schema, checked with a JSON
-Schema validator. The schema is fetched at test time from openai/openai-openapi (MIT) at a
-pinned commit and hash; see tests/specs.py. The test skips, saying how to supply it, when
-it cannot be fetched.
+"""Conformance of /v1/decisions to OpenAI's published OpenAPI schema (general availability,
+2026-10-22 and later), checked with a JSON Schema validator. The schema is fetched at test
+time from openai/openai-openapi (MIT) at a pinned commit and hash; see tests/specs.py. The
+test skips, saying how to supply it, when it cannot be fetched.
 
 Every spec-valid request must answer 200 and every 200 body must validate against
 `DecisionResponse`, except the deliberate limits listed in `UNSUPPORTED`, which must
@@ -52,7 +52,7 @@ VALID = {
     "empty string input": _body(input=""),
     "empty message list": _body(input=[]),
     "all three question types": _body(questions=[PREDICATE, CHOICE, SCORE]),
-    "200 questions": _body(questions=[PREDICATE] * 200),
+    "400 questions": _body(questions=[PREDICATE] * 400),
     "empty instructions": _body(questions=[{**PREDICATE, "instructions": ""}]),
     "named predicate": _body(questions=[{**PREDICATE, "name": "urgent"}]),
     "boolean choice values": _body(questions=[{**CHOICE, "choices": [{"value": True}, {"value": False}]}]),
@@ -62,6 +62,28 @@ VALID = {
     "user message, explicit type": _body(input=[_message("user", "hi", type="message")]),
     "user message, input_text parts": _body(
         input=[_message("user", [{"type": "input_text", "text": "a"}, {"type": "input_text", "text": "b"}])]
+    ),
+    "input_json object part": _body(
+        input=[_message("user", [{"type": "input_json", "data": {"ticket": {"body": "Refund me."}, "n": [1, 2]}}])]
+    ),
+    "input_json array of objects": _body(
+        input=[_message("user", [{"type": "input_json", "data": [{"a": 1}, {"b": None}]}])]
+    ),
+    "text and JSON parts": _body(
+        input=[
+            _message("user", [{"type": "input_text", "text": "Evaluate."}, {"type": "input_json", "data": {"k": 1}}])
+        ]
+    ),
+    "predicate with instruction parts": _body(
+        questions=[
+            {
+                **PREDICATE,
+                "instructions": [{"type": "input_text", "text": "Urgent?"}, {"type": "input_json", "data": {"a": 1}}],
+            }
+        ]
+    ),
+    "choice with a JSON instruction part": _body(
+        questions=[{**CHOICE, "instructions": [{"type": "input_json", "data": [{"policy": "refunds"}]}]}]
     ),
     "input_text with a cache breakpoint": _body(
         input=[
@@ -74,23 +96,48 @@ VALID = {
     "null optional fields": _body(prompt_cache_key=None, prompt_cache_options=None, safety_identifier=None),
 }
 
-# Spec-valid requests this text decision adapter rejects on purpose (README, "Deliberate
-# scope limits on this route"). Each must fail with a 400 in OpenAI's error shape.
+# Spec-valid requests this text decision adapter rejects on purpose (README, "What
+# /v1/decisions doesn't support"). Each must fail with a 400 in OpenAI's error shape.
 UNSUPPORTED = {
-    "image part": _body(input=[_message("user", [{"type": "input_image", "image_url": "https://x.test/y.png"}])]),
     "system message": _body(input=[_message("system", "Be terse."), _message("user", "hi")]),
-    "developer message": _body(input=[_message("developer", "Be terse."), _message("user", "hi")]),
+    "developer message with text parts": _body(
+        input=[_message("developer", [{"type": "input_text", "text": "Be terse."}]), _message("user", "hi")]
+    ),
     "assistant message": _body(input=[_message("user", "hi"), _message("assistant", "hello")]),
-    "function call items": _body(
+    "assistant message with output_text and refusal parts": _body(
+        input=[
+            _message("user", "hi"),
+            _message("assistant", [{"type": "output_text", "text": "hello"}, {"type": "refusal", "refusal": "no"}]),
+        ]
+    ),
+    "function call and output": _body(
         input=[
             {"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
             {"type": "function_call_output", "call_id": "c1", "output": "42"},
         ]
     ),
-    "custom tool call items": _body(
+    "custom tool call and output": _body(
         input=[
             {"type": "custom_tool_call", "call_id": "c1", "name": "t", "input": "x"},
-            {"type": "custom_tool_call_output", "call_id": "c1", "output": "y"},
+            {"type": "custom_tool_call_output", "call_id": "c1", "output": [{"type": "input_text", "text": "y"}]},
+        ]
+    ),
+    "image part": _body(input=[_message("user", [{"type": "input_image", "image_url": "https://x.test/y.png"}])]),
+    "duplicate choice values": _body(questions=[{**CHOICE, "choices": [{"value": "a"}, {"value": "a"}]}]),
+    "image part with detail": _body(
+        input=[_message("user", [{"type": "input_image", "image_url": "data:image/png;base64,AA", "detail": "low"}])]
+    ),
+    "image in question instructions": _body(
+        questions=[{**PREDICATE, "instructions": [{"type": "input_image", "image_url": "https://x.test/y.png"}]}]
+    ),
+    "image in a tool output": _body(
+        input=[
+            {"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
+            {
+                "type": "function_call_output",
+                "call_id": "c1",
+                "output": [{"type": "input_image", "image_url": "https://x.test/y.png"}],
+            },
         ]
     ),
 }
@@ -99,7 +146,7 @@ INVALID = {
     "missing model": {"input": "x", "questions": [PREDICATE]},
     "missing input": {"model": "m", "questions": [PREDICATE]},
     "no questions": _body(questions=[]),
-    "201 questions": _body(questions=[PREDICATE] * 201),
+    "401 questions": _body(questions=[PREDICATE] * 401),
     "1 choice": _body(questions=[{**CHOICE, "choices": [{"value": "a"}]}]),
     "256 choices": _body(questions=[{**CHOICE, "choices": [{"value": f"v{i}"} for i in range(256)]}]),
     "1 score level": _body(questions=[{**SCORE, "levels": [{"label": "a"}]}]),
@@ -107,6 +154,17 @@ INVALID = {
     "predicate without instructions": _body(questions=[{"type": "predicate"}]),
     "numeric choice values": _body(questions=[{**CHOICE, "choices": [{"value": 1}, {"value": 2}]}]),
     "level without label": _body(questions=[{**SCORE, "levels": [{"description": "a"}, {"description": "b"}]}]),
+    "input_json with string data": _body(input=[_message("user", [{"type": "input_json", "data": "x"}])]),
+    "input_json with an array of numbers": _body(input=[_message("user", [{"type": "input_json", "data": [1, 2]}])]),
+    "empty instructions array": _body(questions=[{**PREDICATE, "instructions": []}]),
+    "cache breakpoint in an instruction part": _body(
+        questions=[
+            {
+                **PREDICATE,
+                "instructions": [{"type": "input_text", "text": "x", "prompt_cache_breakpoint": {"mode": "explicit"}}],
+            }
+        ]
+    ),
     "unknown top-level field": _body(temperature=0),
     "unknown question field": _body(questions=[{**PREDICATE, "extra": 1}]),
     "unknown message role": _body(input=[_message("tool", "x")]),
@@ -117,6 +175,7 @@ INVALID = {
 
 # Spec-invalid requests the plugin answers anyway: the fields are accepted and ignored,
 # or a missing name is treated as one, so tightening them would only break clients.
+# `input_json` over OpenAI's stated size limits is also accepted; this server's own limits apply.
 ACCEPTED_LENIENTLY = {
     "null question name": _body(questions=[{**PREDICATE, "name": None}]),
     "unsupported cache ttl": _body(prompt_cache_options={"ttl": "1h"}),
@@ -130,7 +189,7 @@ def _errors(validator, instance):
 
 @pytest.fixture()
 def client(monkeypatch):
-    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer, reads=None):
+    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer, reads=None, options=None):
         if q.type == "choice":
             keys = list(q.criteria)
             answer = {
@@ -150,7 +209,12 @@ def client(monkeypatch):
                 "probabilities": {str(i): 1.0 / n for i in range(n)},
                 "confidence": 0.3,
             }
-        return name, answer, sp.TokenUsage(input_tokens=10, output_tokens=1, cached_tokens=4)
+        return (
+            name,
+            answer,
+            sp.TokenUsage(input_tokens=10, output_tokens=1, cached_tokens=4),
+            sp.QuestionDiagnostics(0.97, True),
+        )
 
     monkeypatch.setattr(sp, "_answer_question", fake_answer)
 
@@ -203,6 +267,35 @@ def test_lenient_acceptance_still_returns_a_spec_valid_response(client, name):
     resp = client.post("/v1/decisions", json=body)
     assert resp.status_code == 200, resp.text
     assert not _errors(RESPONSE, resp.json())
+
+
+# vLLM's own /v1/decisions takes these two fields beyond the schema (cache_salt, joint).
+VLLM_EXTENSIONS = {
+    "cache salt": _body(cache_salt="tenant-1"),
+    "joint false": _body(joint=False),
+}
+
+
+@pytest.mark.parametrize("name", VLLM_EXTENSIONS)
+def test_vllm_extension_is_accepted_with_a_spec_valid_response(client, name):
+    body = VLLM_EXTENSIONS[name]
+    assert _errors(REQUEST, body), "test case is spec-valid, so it is not an extension"
+    resp = client.post("/v1/decisions", json=body)
+    assert resp.status_code == 200, resp.text
+    assert not _errors(RESPONSE, resp.json())
+
+
+def test_the_response_has_no_diagnostics_because_the_schema_forbids_extra_fields(client):
+    data = client.post("/v1/decisions", json=_body()).json()
+    assert "diagnostics" not in data and not _errors(RESPONSE, data)
+
+
+@pytest.mark.parametrize("field", ["instructions", "chat_template_kwargs", "priority", "request_id"])
+def test_systemone_only_fields_are_rejected_on_decisions(client, field):
+    value = {"chat_template_kwargs": {}, "priority": 0}.get(field, "x")
+    resp = client.post("/v1/decisions", json=_body(**{field: value}))
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "invalid_request_error"
 
 
 def test_usage_reports_cached_tokens_summed_over_questions(client):

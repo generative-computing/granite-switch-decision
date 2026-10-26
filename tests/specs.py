@@ -19,9 +19,9 @@ import os
 import urllib.request
 from pathlib import Path
 
-OPENAI_COMMIT = "33248a638234a53846ed3ab4b2a7c77069bc1030"
+OPENAI_COMMIT = "8243cc8fa6f04430fb1f1a6a2cb926fbeb4f7f26"
 OPENAI_URL = f"https://raw.githubusercontent.com/openai/openai-openapi/{OPENAI_COMMIT}/openapi.json"
-OPENAI_SHA256 = "c09eea21c178f883549c690752aa082a9fef494a719b7a08ca85341bd033b221"
+OPENAI_SHA256 = "69448733efdb426a3d1914a5cd18995d2849db2c41e20b9b14c7eb6fa84540b6"
 _CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "granite-switch-decision"
 
 OPENAI_REASON = (
