@@ -19,7 +19,8 @@ Exit code 0 means every check passed. Checks:
   parity              the same questions through both routes agree: same
                       choice pick, same per-option/level probabilities, same
                       predicate probability, same score
-  input_flattening    a message-list input answers identically to the string
+  input_flattening    a message-list input, an input_json part and instruction parts
+                      answer identically to their plain-string equivalents
   boolean_values      boolean choice values round-trip as booleans
   usage               usage is present and non-zero
   errors              400s with OpenAI's error shape (empty questions, image
@@ -267,6 +268,40 @@ def check_input_flattening(client: Client, model: str, tol: float) -> Check:
         string_form["answers"][0]["probability"],
         message_form["answers"][0]["probability"],
         "string vs message-list probability",
+        tol,
+    )
+
+    # A JSON part is the compact JSON text of an object state, and instruction parts join like input parts.
+    obj = {"ticket": "My payouts have failed three times.", "attempts": 3}
+    _, text_form = client.post(
+        "/v1/decisions", {"model": model, "input": json.dumps(obj, ensure_ascii=False), "questions": [question]}
+    )
+    _, json_form = client.post(
+        "/v1/decisions",
+        {
+            "model": model,
+            "input": [{"role": "user", "content": [{"type": "input_json", "data": obj}]}],
+            "questions": [question],
+        },
+    )
+    check.expect_close(
+        text_form["answers"][0]["probability"],
+        json_form["answers"][0]["probability"],
+        "JSON text vs input_json probability",
+        tol,
+    )
+    parts = [{"type": "input_text", "text": "Is this about"}, {"type": "input_text", "text": "payouts?"}]
+    _, plain = client.post(
+        "/v1/decisions",
+        {"model": model, "input": STATE, "questions": [{**question, "instructions": "Is this about\n\npayouts?"}]},
+    )
+    _, split = client.post(
+        "/v1/decisions", {"model": model, "input": STATE, "questions": [{**question, "instructions": parts}]}
+    )
+    check.expect_close(
+        plain["answers"][0]["probability"],
+        split["answers"][0]["probability"],
+        "string vs instruction-parts probability",
         tol,
     )
     return check

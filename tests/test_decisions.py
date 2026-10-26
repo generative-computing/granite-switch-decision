@@ -105,11 +105,11 @@ def test_score_bounds():
 
 def test_request_question_bounds():
     sp.DecisionRequest.model_validate(_request([_predicate()]))
-    sp.DecisionRequest.model_validate(_request([_predicate()] * 200))
-    with pytest.raises(ValidationError, match="1-200"):
+    sp.DecisionRequest.model_validate(_request([_predicate()] * 400))
+    with pytest.raises(ValidationError, match="1-400"):
         sp.DecisionRequest.model_validate(_request([]))
-    with pytest.raises(ValidationError, match="1-200"):
-        sp.DecisionRequest.model_validate(_request([_predicate()] * 201))
+    with pytest.raises(ValidationError, match="1-400"):
+        sp.DecisionRequest.model_validate(_request([_predicate()] * 401))
 
 
 def test_request_ignores_sdk_optional_fields():
@@ -145,6 +145,69 @@ def test_input_image_rejected():
     parsed = [sp.DecisionInputMessage.model_validate(m) for m in data]
     with pytest.raises(ValueError, match="image input is not supported"):
         sp._decisions_input_to_state(parsed)
+
+
+def test_input_json_part_flattens_like_an_object_state():
+    """A JSON part is compact JSON text, the rule an object `state` follows on the systemone route."""
+    data = {"ticket": {"body": "Refund the duplicate charge."}, "order": {"charges": [49, 49]}}
+    parsed = [
+        sp.DecisionInputMessage.model_validate({"role": "user", "content": [{"type": "input_json", "data": data}]})
+    ]
+    assert sp._decisions_input_to_state(parsed) == sp._text_of(data)
+    rows = [{"a": 1}, {"b": "é"}]
+    parsed = [
+        sp.DecisionInputMessage.model_validate({"role": "user", "content": [{"type": "input_json", "data": rows}]})
+    ]
+    assert sp._decisions_input_to_state(parsed) == '[{"a": 1}, {"b": "é"}]'
+
+
+def test_input_json_data_must_be_an_object_or_array_of_objects():
+    for bad in ("text", 3, [1, 2], None):
+        with pytest.raises(ValidationError):
+            sp.DecisionInputMessage.model_validate({"role": "user", "content": [{"type": "input_json", "data": bad}]})
+
+
+def test_input_json_mixed_with_text_keeps_part_order():
+    parts = [{"type": "input_text", "text": "Evaluate."}, {"type": "input_json", "data": {"k": "v"}}]
+    parsed = [sp.DecisionInputMessage.model_validate({"role": "user", "content": parts})]
+    assert sp._decisions_input_to_state(parsed) == 'Evaluate.\n\n{"k": "v"}'
+
+
+def test_input_image_with_detail_gets_the_image_message():
+    data = [
+        {
+            "role": "user",
+            "content": [{"type": "input_image", "image_url": "data:image/png;base64,AA", "detail": "low"}],
+        }
+    ]
+    parsed = [sp.DecisionInputMessage.model_validate(m) for m in data]
+    with pytest.raises(ValueError, match="image input is not supported"):
+        sp._decisions_input_to_state(parsed)
+
+
+def test_instruction_parts_flatten_like_input_parts():
+    parts = [{"type": "input_text", "text": "Is it urgent?"}, {"type": "input_json", "data": {"sla": "4h"}}]
+    q = sp.DecisionQuestion.model_validate(_predicate(instructions=parts))
+    _, internal, _ = sp._decisions_question_to_internal(q, 0)
+    assert internal.instructions == 'Is it urgent?\n\n{"sla": "4h"}'
+
+
+def test_instruction_image_part_rejected():
+    parts = [
+        {"type": "input_text", "text": "Same as this?"},
+        {"type": "input_image", "image_url": "https://x.test/y.png"},
+    ]
+    q = sp.DecisionQuestion.model_validate(_predicate(instructions=parts))
+    with pytest.raises(ValueError, match="image input is not supported"):
+        sp._decisions_question_to_internal(q, 0)
+
+
+def test_instruction_parts_reject_an_empty_list_and_cache_breakpoints():
+    with pytest.raises(ValidationError):
+        sp.DecisionQuestion.model_validate(_predicate(instructions=[]))
+    part = {"type": "input_text", "text": "x", "prompt_cache_breakpoint": {"mode": "explicit"}}
+    with pytest.raises(ValidationError):
+        sp.DecisionQuestion.model_validate(_predicate(instructions=[part]))
 
 
 def test_input_non_user_role_rejected():
@@ -381,7 +444,18 @@ def test_decisions_route_validation_error_uses_openai_shape(client):
     )
     assert resp.status_code == 400
     assert resp.json()["error"]["type"] == "invalid_request_error"
-    assert "1-200" in resp.json()["error"]["message"]
+    assert "1-400" in resp.json()["error"]["message"]
+
+
+def test_decisions_route_instruction_image_rejected_with_openai_error(client):
+    parts = [{"type": "input_text", "text": "Same?"}, {"type": "input_image", "image_url": "https://x.test/y.png"}]
+    resp = client.post(
+        "/v1/decisions",
+        json={"model": "granite-switch", "input": "x", "questions": [{"type": "predicate", "instructions": parts}]},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "invalid_request_error"
+    assert "image input is not supported" in resp.json()["error"]["message"]
 
 
 def test_decisions_route_image_input_rejected(client):

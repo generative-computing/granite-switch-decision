@@ -9,7 +9,7 @@ cancellation, error handling, and optional load. Standard library only.
 
 Exit code 0 means every check passed. Checks:
 
-  question_cap      200 questions accepted on /v1/systemone, 201 rejected (422)
+  question_cap      400 questions accepted on /v1/systemone, 401 rejected (422)
   size_guard        a short state with long options is rejected before engine work
   body_limits       oversized body, deep nesting, Content-Encoding, lone surrogates
   escaping          special tokens and the invocation marker in caller text are read
@@ -89,13 +89,13 @@ def predicate(text: str) -> dict:
 
 def check_question_cap(p: Probe) -> Result:
     r = Result("question_cap")
-    questions = {f"q{i}": {"type": "noul", "instructions": f"Question {i}?"} for i in range(201)}
+    questions = {f"q{i}": {"type": "noul", "instructions": f"Question {i}?"} for i in range(401)}
     status, _ = p.post(
-        "/v1/systemone", {"model": p.model, "state": "x", "questions": dict(list(questions.items())[:200])}
+        "/v1/systemone", {"model": p.model, "state": "x", "questions": dict(list(questions.items())[:400])}
     )
-    r.expect(status == 200, f"200 questions: status {status}, want 200")
+    r.expect(status == 200, f"400 questions: status {status}, want 200")
     status, _ = p.post("/v1/systemone", {"model": p.model, "state": "x", "questions": questions})
-    r.expect(status == 422, f"201 questions: status {status}, want 422")
+    r.expect(status == 422, f"401 questions: status {status}, want 422")
     return r
 
 

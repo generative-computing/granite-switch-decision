@@ -35,10 +35,12 @@ it needs `gitleaks` on `PATH` for the last of those.
   question) and error shapes.
 - `tests/test_openai_spec.py`: `/v1/decisions` requests and responses validated with a
   JSON Schema validator against OpenAI's published schema. The schema is downloaded on
-  first run from `openai/openai-openapi` (MIT) at a pinned commit, checked against a
-  pinned SHA-256 and cached in `~/.cache/granite-switch-decision`; it is never committed.
+  first run from `openai/openai-openapi` (MIT) at a pinned commit (the general-availability
+  revision), checked against a pinned SHA-256 and cached in `~/.cache/granite-switch-decision`;
+  it is never committed. To move the pin, set `OPENAI_COMMIT` in `tests/specs.py` and compute
+  `OPENAI_SHA256` with `curl -fsSL https://raw.githubusercontent.com/openai/openai-openapi/<sha>/openapi.json | shasum -a 256`.
   Offline, the test skips and says how to supply a local copy (`DECISION_OPENAI_SPEC`).
-  Deliberate limits are listed as named exceptions.
+  Deliberate limits are listed as named exceptions, in the README's "Deliberate exceptions on /v1/decisions".
 - `tests/test_systemone_spec.py`: `/v1/systemone` validated against jev's wire models from
   TypeSafe's MIT-licensed `typesafe-sdk` (a dev dependency), which TypeSafe generates
   from its API spec. Those models omit the spec's bounds on choice options (1-255) and

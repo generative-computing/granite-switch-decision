@@ -219,10 +219,12 @@ same prompt, served from the prefix cache.
 - **Caller text is escaped.** Special tokens and the invocation marker inside the state, instructions
   or descriptions are broken with an invisible U+2060, so they cannot forge turns or move the adapter's
   activation point.
-- **Input.** `input` messages must have the role `user`, and images are rejected, because the trained
+- **Input.** `input` is a string or `user` messages of text and `input_json` parts. A JSON part is
+  rendered as compact JSON, the way an object `state` is on `/v1/systemone`, and a question's
+  `instructions` may be a string or text and JSON parts. Images are rejected, because the trained
   layout has one text state turn. `/v1/systemone` rejects unknown fields and `box` questions.
 - **Size.** The state, instructions and options of each question are counted before any engine work:
-  at most 200 questions, 32k tokens per question and 64k per request (262k with
+  at most 400 questions, 32k tokens per question and 64k per request (262k with
   `TypeSafe-Danger-Zone-Long-Context: true` on `/v1/systemone`), all capped by `--max-model-len`.
   Bodies over 32 MiB, nesting deeper than 64 and non-finite numbers are rejected.
 - **Usage.** A `choice` with more than 128 options runs as two engine requests over the same prompt,
@@ -238,6 +240,22 @@ same prompt, served from the prefix cache.
 - **Not provided.** Authentication (use vLLM's `--api-key`), rate limiting and `refusal` answers.
   Engine reads are not bit-identical between batched and solo requests, so repeated calls can differ in
   the third decimal place.
+
+### Deliberate exceptions on /v1/decisions
+
+The route follows OpenAI's Decisions schema at the general-availability revision. These requests are
+valid in that schema and this server answers each with a 400 in OpenAI's error shape, because it serves
+a text-only decision adapter whose trained layout has one text state turn:
+
+- `input_image` parts, in `input` or in a question's `instructions`.
+- `developer`, `system` and `assistant` messages.
+- `function_call`, `function_call_output`, `custom_tool_call` and `custom_tool_call_output` items.
+
+It never returns `refusal` answers. It also answers a few requests the schema rejects: a `null` question
+`name`, a `prompt_cache_options.ttl` other than `30m`, and a `prompt_cache_key` over 64 characters. An
+`input_json` part larger than the schema's limits (256 KiB, 10,000 values, 32 levels) is accepted and
+bounded by this server's own limits (32 MiB bodies, 64 levels of nesting and the token caps above).
+`tests/test_openai_spec.py` pins each of these.
 
 ## Upstream status
 

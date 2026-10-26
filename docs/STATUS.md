@@ -15,7 +15,7 @@ and spec suites and the 8b battery (`e2e_check`, `probe_check`, `accuracy_check`
 | Area | How | Result |
 |---|---|---|
 | Unit and route tests | `pytest`, engine stubbed, in CI | pass |
-| `/v1/decisions` against OpenAI's OpenAPI schema | `tests/test_openai_spec.py` (41 cases), plus the same request set live | pass, with the exceptions listed in the README |
+| `/v1/decisions` against OpenAI's OpenAPI schema | `tests/test_openai_spec.py` (52 cases, against the general-availability schema), plus the same request set live | pass, with the exceptions listed in the README |
 | `/v1/systemone` against jev's wire format | `tests/test_systemone_spec.py` (24 cases) against `typesafe-sdk`'s generated models, stubbed | pass; the plugin also rejects unknown fields, which jev's format allows |
 | Live wire battery | `scripts/e2e_check.py` (11 checks) | 11/11 |
 | Prompt rendering | server prompt token counts against an offline render with the checkpoint's tokenizer and chat template | identical |

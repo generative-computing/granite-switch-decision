@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Conformance of /v1/decisions to OpenAI's published OpenAPI schema, checked with a JSON
-Schema validator. The schema is fetched at test time from openai/openai-openapi (MIT) at a
-pinned commit and hash; see tests/specs.py. The test skips, saying how to supply it, when
-it cannot be fetched.
+"""Conformance of /v1/decisions to OpenAI's published OpenAPI schema (general availability,
+2026-10-22 and later), checked with a JSON Schema validator. The schema is fetched at test
+time from openai/openai-openapi (MIT) at a pinned commit and hash; see tests/specs.py. The
+test skips, saying how to supply it, when it cannot be fetched.
 
 Every spec-valid request must answer 200 and every 200 body must validate against
 `DecisionResponse`, except the deliberate limits listed in `UNSUPPORTED`, which must
@@ -52,7 +52,7 @@ VALID = {
     "empty string input": _body(input=""),
     "empty message list": _body(input=[]),
     "all three question types": _body(questions=[PREDICATE, CHOICE, SCORE]),
-    "200 questions": _body(questions=[PREDICATE] * 200),
+    "400 questions": _body(questions=[PREDICATE] * 400),
     "empty instructions": _body(questions=[{**PREDICATE, "instructions": ""}]),
     "named predicate": _body(questions=[{**PREDICATE, "name": "urgent"}]),
     "boolean choice values": _body(questions=[{**CHOICE, "choices": [{"value": True}, {"value": False}]}]),
@@ -62,6 +62,28 @@ VALID = {
     "user message, explicit type": _body(input=[_message("user", "hi", type="message")]),
     "user message, input_text parts": _body(
         input=[_message("user", [{"type": "input_text", "text": "a"}, {"type": "input_text", "text": "b"}])]
+    ),
+    "input_json object part": _body(
+        input=[_message("user", [{"type": "input_json", "data": {"ticket": {"body": "Refund me."}, "n": [1, 2]}}])]
+    ),
+    "input_json array of objects": _body(
+        input=[_message("user", [{"type": "input_json", "data": [{"a": 1}, {"b": None}]}])]
+    ),
+    "text and JSON parts": _body(
+        input=[
+            _message("user", [{"type": "input_text", "text": "Evaluate."}, {"type": "input_json", "data": {"k": 1}}])
+        ]
+    ),
+    "predicate with instruction parts": _body(
+        questions=[
+            {
+                **PREDICATE,
+                "instructions": [{"type": "input_text", "text": "Urgent?"}, {"type": "input_json", "data": {"a": 1}}],
+            }
+        ]
+    ),
+    "choice with a JSON instruction part": _body(
+        questions=[{**CHOICE, "instructions": [{"type": "input_json", "data": [{"policy": "refunds"}]}]}]
     ),
     "input_text with a cache breakpoint": _body(
         input=[
@@ -75,9 +97,15 @@ VALID = {
 }
 
 # Spec-valid requests this text decision adapter rejects on purpose (README, "Deliberate
-# scope limits on this route"). Each must fail with a 400 in OpenAI's error shape.
+# exceptions on /v1/decisions"). Each must fail with a 400 in OpenAI's error shape.
 UNSUPPORTED = {
     "image part": _body(input=[_message("user", [{"type": "input_image", "image_url": "https://x.test/y.png"}])]),
+    "image part with detail": _body(
+        input=[_message("user", [{"type": "input_image", "image_url": "data:image/png;base64,AA", "detail": "low"}])]
+    ),
+    "image in question instructions": _body(
+        questions=[{**PREDICATE, "instructions": [{"type": "input_image", "image_url": "https://x.test/y.png"}]}]
+    ),
     "system message": _body(input=[_message("system", "Be terse."), _message("user", "hi")]),
     "developer message": _body(input=[_message("developer", "Be terse."), _message("user", "hi")]),
     "assistant message": _body(input=[_message("user", "hi"), _message("assistant", "hello")]),
@@ -99,7 +127,7 @@ INVALID = {
     "missing model": {"input": "x", "questions": [PREDICATE]},
     "missing input": {"model": "m", "questions": [PREDICATE]},
     "no questions": _body(questions=[]),
-    "201 questions": _body(questions=[PREDICATE] * 201),
+    "401 questions": _body(questions=[PREDICATE] * 401),
     "1 choice": _body(questions=[{**CHOICE, "choices": [{"value": "a"}]}]),
     "256 choices": _body(questions=[{**CHOICE, "choices": [{"value": f"v{i}"} for i in range(256)]}]),
     "1 score level": _body(questions=[{**SCORE, "levels": [{"label": "a"}]}]),
@@ -107,6 +135,17 @@ INVALID = {
     "predicate without instructions": _body(questions=[{"type": "predicate"}]),
     "numeric choice values": _body(questions=[{**CHOICE, "choices": [{"value": 1}, {"value": 2}]}]),
     "level without label": _body(questions=[{**SCORE, "levels": [{"description": "a"}, {"description": "b"}]}]),
+    "input_json with string data": _body(input=[_message("user", [{"type": "input_json", "data": "x"}])]),
+    "input_json with an array of numbers": _body(input=[_message("user", [{"type": "input_json", "data": [1, 2]}])]),
+    "empty instructions array": _body(questions=[{**PREDICATE, "instructions": []}]),
+    "cache breakpoint in an instruction part": _body(
+        questions=[
+            {
+                **PREDICATE,
+                "instructions": [{"type": "input_text", "text": "x", "prompt_cache_breakpoint": {"mode": "explicit"}}],
+            }
+        ]
+    ),
     "unknown top-level field": _body(temperature=0),
     "unknown question field": _body(questions=[{**PREDICATE, "extra": 1}]),
     "unknown message role": _body(input=[_message("tool", "x")]),

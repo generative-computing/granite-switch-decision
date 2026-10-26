@@ -18,11 +18,11 @@ import logging
 import math
 import os
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NamedTuple
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic import ValidationError as PydanticValidationError
 from starlette.routing import Match
 
@@ -51,7 +51,7 @@ DANGER_ZONE_HEADER = "typesafe-danger-zone-long-context"
 # vLLM's MAX_LOGPROB_TOKEN_IDS; a choice with more labels is read in chunks of this size.
 MAX_LABEL_OPTIONS = 128
 # Questions per request on both routes (OpenAI's limit on /v1/decisions).
-MAX_QUESTIONS = 200
+MAX_QUESTIONS = 400
 _MAX_CONCURRENT_ENV = "DECISION_MAX_CONCURRENT_REQUESTS"
 # Engine reads in flight per request, so one wide request cannot flood the engine.
 MAX_READS_PER_REQUEST = 16
@@ -169,16 +169,64 @@ class DecisionLevel(BaseModel):
     description: str | None = None
 
 
+class DecisionCacheBreakpoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["explicit"] = "explicit"
+
+
+class DecisionQuestionText(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["input_text"] = "input_text"
+    text: str
+
+
+class DecisionQuestionImage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["input_image"] = "input_image"
+    image_url: str
+    detail: Literal["low", "high", "auto", "original"] | None = None
+
+
+class DecisionInputJson(BaseModel):
+    """A JSON object, or an array of objects, rendered as compact JSON text like an object `state`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["input_json"] = "input_json"
+    data: dict[str, Any] | list[dict[str, Any]]
+
+
+class DecisionInputText(DecisionQuestionText):
+    """`prompt_cache_breakpoint` is accepted and ignored: vLLM's prefix cache reuses
+    every full block of a matching prefix on its own, with no breakpoints to place."""
+
+    prompt_cache_breakpoint: DecisionCacheBreakpoint | None = None
+
+
+class DecisionInputImage(DecisionQuestionImage):
+    prompt_cache_breakpoint: DecisionCacheBreakpoint | None = None
+
+
+_QuestionPart = Annotated[
+    DecisionQuestionText | DecisionQuestionImage | DecisionInputJson, Field(discriminator="type")
+]
+_MessagePart = Annotated[DecisionInputText | DecisionInputImage | DecisionInputJson, Field(discriminator="type")]
+
+
 class DecisionQuestion(BaseModel):
     """One OpenAI Decisions question (`predicate`/`choice`/`score`), with the field
-    constraints of OpenAI's published spec: `instructions` required, 2-255 unique
-    choices, at most 10 score levels. `name` is optional, since answers are positional, so
-    duplicate or missing names cannot collide (the response echoes the name or null)."""
+    constraints of OpenAI's published spec: `instructions` required (a string, or text and
+    JSON parts), 2-255 unique choices, at most 10 score levels. `name` is optional, since
+    answers are positional, so duplicate or missing names cannot collide (the response
+    echoes the name or null)."""
 
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["predicate", "choice", "score"]
-    instructions: str
+    instructions: str | Annotated[list[_QuestionPart], Field(min_length=1)]
     name: str | None = None
     choices: list[DecisionChoice] | None = None
     levels: list[DecisionLevel] | None = None
@@ -208,30 +256,12 @@ class DecisionQuestion(BaseModel):
         return self
 
 
-class DecisionCacheBreakpoint(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    mode: Literal["explicit"] = "explicit"
-
-
-class DecisionInputPart(BaseModel):
-    """`prompt_cache_breakpoint` is accepted and ignored: vLLM's prefix cache reuses
-    every full block of a matching prefix on its own, with no breakpoints to place."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["input_text", "input_image"]
-    text: str | None = None
-    image_url: str | None = None
-    prompt_cache_breakpoint: DecisionCacheBreakpoint | None = None
-
-
 class DecisionInputMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["message"] = "message"
     role: Literal["user"]
-    content: str | list[DecisionInputPart]
+    content: str | list[_MessagePart]
 
 
 class DecisionRequest(BaseModel):
@@ -251,7 +281,7 @@ class DecisionRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check_questions(self) -> DecisionRequest:
-        # OpenAI: "Ask 1-200 questions about the input. ... Answers come back in the
+        # OpenAI: "Ask 1-400 questions about the input. ... Answers come back in the
         # same order."
         if not 1 <= len(self.questions) <= MAX_QUESTIONS:
             raise ValueError(f"`questions` must contain 1-{MAX_QUESTIONS} entries")
@@ -821,40 +851,45 @@ async def _cancel_pending(tasks: list[asyncio.Task]) -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def _flatten_parts(parts: list[Any]) -> str:
+    """Content parts as one string, joined with blank lines: text as it is, JSON as compact
+    JSON (the rule an object `state` follows on the systemone route). Image parts are
+    rejected, as `box` questions are on the systemone route."""
+    texts: list[str] = []
+    for part in parts:
+        if isinstance(part, (DecisionQuestionImage, DecisionInputImage)):
+            raise ValueError("image input is not supported: this server serves a text decision adapter")
+        texts.append(part.text if isinstance(part, DecisionQuestionText) else _text_of(part.data))
+    return "\n\n".join(texts)
+
+
 def _decisions_input_to_state(data: str | list[DecisionInputMessage]) -> str:
-    """Flatten OpenAI's `input` (a string, or user messages with text/image parts) into the
-    state string both routes share: message texts joined with blank lines. Image parts
-    are rejected, as `box` questions are on the systemone route."""
+    """Flatten OpenAI's `input` (a string, or user messages with text, image and JSON
+    parts) into the state string both routes share: message texts joined with blank lines."""
     if isinstance(data, str):
         return data
-    texts: list[str] = []
-    for message in data:
-        if isinstance(message.content, str):
-            texts.append(message.content)
-            continue
-        for part in message.content:
-            if part.type == "input_image":
-                raise ValueError("image input is not supported: this server serves a text decision adapter")
-            if part.text is None:
-                raise ValueError("an `input_text` part needs a `text` string")
-            texts.append(part.text)
-    return "\n\n".join(texts)
+    return "\n\n".join(m.content if isinstance(m.content, str) else _flatten_parts(m.content) for m in data)
+
+
+def _instructions_text(instructions: str | list[Any]) -> str:
+    return instructions if isinstance(instructions, str) else _flatten_parts(instructions)
 
 
 def _decisions_question_to_internal(question: DecisionQuestion, index: int) -> tuple[str, Question, dict[str, Any]]:
     """An OpenAI question as the internal jev question, keyed by position, plus what maps the answer back."""
+    instructions = _instructions_text(question.instructions)
     if question.type == "predicate":
-        internal = Question(type="noul", instructions=question.instructions)
+        internal = Question(type="noul", instructions=instructions)
         extras: dict[str, Any] = {}
     elif question.type == "choice":
         assert question.choices is not None  # the validator guarantees it for choice
         criteria = {_choice_key(c.value): c.description for c in question.choices}
-        internal = Question(type="choice", instructions=question.instructions, criteria=criteria)
+        internal = Question(type="choice", instructions=instructions, criteria=criteria)
         extras = {"value_map": {_choice_key(c.value): c.value for c in question.choices}}
     else:
         assert question.levels is not None  # the validator guarantees it for score
         descriptions = [level.description or level.label for level in question.levels]
-        internal = Question(type="score", instructions=question.instructions, criteria=descriptions)
+        internal = Question(type="score", instructions=instructions, criteria=descriptions)
         extras = {"labels": [level.label for level in question.levels]}
     return str(index), internal, extras
 
@@ -989,10 +1024,9 @@ async def _handle_decisions(raw_request: Request) -> Response:
 
     try:
         state_text = _decisions_input_to_state(req.input)
+        translated = [_decisions_question_to_internal(question, index) for index, question in enumerate(req.questions)]
     except ValueError as e:
         return _openai_error(HTTPStatus.BAD_REQUEST, str(e))
-
-    translated = [_decisions_question_to_internal(question, index) for index, question in enumerate(req.questions)]
 
     try:
         _enforce_context_limits(
