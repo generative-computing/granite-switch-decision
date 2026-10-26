@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, NamedTuple
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 from starlette.routing import Match
 
@@ -132,12 +132,74 @@ class Question(BaseModel):
         return self
 
 
+_CACHE_SALT_FORBIDDEN = frozenset("@/\\\x00")
+_MAX_CACHE_SALT = 128
+
+
+def _check_cache_salt(value: str | None) -> str | None:
+    """vLLM's own rule for a cache salt, checked up front so a bad value is a 4xx, not a 500."""
+    if value is None:
+        return None
+    if not value or len(value) > _MAX_CACHE_SALT or any(c in _CACHE_SALT_FORBIDDEN for c in value):
+        raise ValueError(
+            "`cache_salt` must be a non-empty string of at most 128 characters without '@', '/', '\\' or NUL"
+        )
+    return value
+
+
+def _check_joint(value: bool) -> bool:
+    if value:
+        raise ValueError("`joint` is not supported: this model reads each question on its own")
+    return value
+
+
+_NO_REQUEST_CONTEXT = (
+    "request-level `instructions` and developer or system messages are not supported: the decision adapter reads "
+    "the state and each question's own instructions. Put the context in the state."
+)
+
+
 class SystemOneRequest(BaseModel):
+    """jev's request plus the fields vLLM's `/v1/systemone` takes. `chat_template_kwargs` is checked and
+    never forwarded, because the chat template renders some of its keys unescaped. Request-level
+    `instructions` and non-empty media are refused."""
+
     model_config = ConfigDict(extra="forbid")
 
     state: Any
     model: str
     questions: dict[str, Question]
+
+    instructions: Any = None
+    chat_template_kwargs: dict[str, Any] | None = None
+    cache_salt: str | None = None
+    joint: StrictBool = False
+    images: list[Any] | None = None
+    audio: list[Any] | None = None
+    videos: list[Any] | None = None
+    priority: int = 0
+    request_id: str | None = None
+
+    @model_validator(mode="after")
+    def _check_vllm_fields(self) -> SystemOneRequest:
+        if self.instructions is not None:
+            raise ValueError(_NO_REQUEST_CONTEXT)
+        _check_cache_salt(self.cache_salt)
+        _check_joint(self.joint)
+        for field in ("images", "audio", "videos"):
+            if getattr(self, field):
+                raise ValueError(f"`{field}` is not supported: this server serves a text decision adapter")
+        if self.priority != 0:
+            raise ValueError("`priority` is not supported: requests are not scheduled by priority")
+        kwargs = self.chat_template_kwargs or {}
+        if "adapter_name" in kwargs:
+            raise ValueError("`chat_template_kwargs.adapter_name` is set by the server")
+        unknown = sorted(set(kwargs) - {"enable_thinking"})
+        if unknown:
+            raise ValueError(f"`chat_template_kwargs` keys {unknown} are not supported: only `enable_thinking: false`")
+        if kwargs.get("enable_thinking"):
+            raise ValueError("`chat_template_kwargs.enable_thinking` must be false: a read is the reply's first token")
+        return self
 
     @model_validator(mode="after")
     def _question_count(self) -> SystemOneRequest:
@@ -264,6 +326,9 @@ class DecisionInputMessage(BaseModel):
     content: str | list[_MessagePart]
 
 
+_UNSUPPORTED_ITEM_TYPES = ("function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output")
+
+
 class DecisionRequest(BaseModel):
     """OpenAI's Decisions request body. `prompt_cache_key`, `prompt_cache_options` and
     `safety_identifier` are accepted, since the official SDKs send them, and ignored:
@@ -278,6 +343,33 @@ class DecisionRequest(BaseModel):
     prompt_cache_key: str | None = None
     prompt_cache_options: Any = None
     safety_identifier: str | None = None
+
+    # vLLM's extensions to this route (its own `/v1/decisions` accepts exactly these two).
+    cache_salt: str | None = None
+    joint: StrictBool = False
+
+    @field_validator("input", mode="before")
+    @classmethod
+    def _name_the_unsupported_items(cls, value: Any) -> Any:
+        """Valid in OpenAI's schema but not read here: say which part, and what to do instead."""
+        if isinstance(value, list):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                kind = item["type"] if item.get("type") in _UNSUPPORTED_ITEM_TYPES else item.get("role")
+                if kind in _UNSUPPORTED_ITEM_TYPES or kind in ("developer", "system", "assistant"):
+                    what = f"`{kind}` items" if kind in _UNSUPPORTED_ITEM_TYPES else f"`{kind}` messages"
+                    raise ValueError(
+                        f"{what} are not supported: the decision adapter reads user text. "
+                        "Put what the questions are about in a user message."
+                    )
+        return value
+
+    @model_validator(mode="after")
+    def _check_vllm_extensions(self) -> DecisionRequest:
+        _check_cache_salt(self.cache_salt)
+        _check_joint(self.joint)
+        return self
 
     @model_validator(mode="after")
     def _check_questions(self) -> DecisionRequest:
@@ -596,6 +688,14 @@ def _error_response_type() -> type:
     return ErrorResponse
 
 
+def _sampled_token_id(resp) -> int | None:
+    """The id of the token the engine sampled (`token_id:<n>`), or None if it is not reported."""
+    try:
+        return int(resp.choices[0].logprobs.content[0].token.split(":", 1)[1])
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
+
+
 def _label_logprobs_by_id(top_logprobs) -> dict[int, float]:
     """`token_id:<n>` entries from a response's top_logprobs, keyed by id."""
     try:
@@ -607,15 +707,30 @@ def _label_logprobs_by_id(top_logprobs) -> dict[int, float]:
 _LABEL_MASS_WARN = 0.9
 
 
-def _log_label_mass(name: str, label_logprobs: list[float]) -> None:
-    """Log the probability mass the option labels hold before normalising. Low mass means the
-    model wanted a token outside the labels (a wrong marker, a broken layout). Observation only:
-    answers are never gated on it."""
+def _log_label_mass(name: str, label_logprobs: list[float]) -> float:
+    """Log, and return, the probability mass the option labels hold before normalising. Low mass
+    means the model wanted a token outside the labels (a wrong marker, a broken layout).
+    Observation only: answers are never gated on it."""
     mass = sum(math.exp(lp) for lp in label_logprobs)
     if mass < _LABEL_MASS_WARN:
         _log.warning("decision %r: option labels hold only %.3f of the probability mass", name, mass)
     else:
         _log.debug("decision %r: label mass %.4f", name, mass)
+    return mass
+
+
+class QuestionDiagnostics(NamedTuple):
+    """vLLM's `diagnostics` for one question: the probability the model put on the option labels
+    over its whole vocabulary, and whether its most likely token was one of them."""
+
+    label_mass: float
+    argmax_is_label: bool
+
+
+class ReadOptions(NamedTuple):
+    """Per-request settings every engine read of a request shares."""
+
+    cache_salt: str | None = None
 
 
 def _check_activation(tok, renderer, adapter_name: str) -> None:
@@ -662,6 +777,7 @@ async def _fetch_label_logprobs(
     adapter_name: str,
     msgs: list[dict[str, str]],
     label_ids_chunk: list[int],
+    cache_salt: str | None = None,
 ):
     """One `create_chat_completion` call for the logprobs of `label_ids_chunk` over the
     rendered `msgs`. Returns the raw response; a question with more than
@@ -681,7 +797,9 @@ async def _fetch_label_logprobs(
         top_logprobs=1,
         logprob_token_ids=label_ids_chunk,
         return_tokens_as_token_ids=True,
+        # Never caller-supplied: the template renders other keys unescaped, and the adapter is the server's.
         chat_template_kwargs={"adapter_name": adapter_name},
+        cache_salt=cache_salt,
     )
     resp = await chat.create_chat_completion(req)
     if isinstance(resp, ErrorResponse):
@@ -701,9 +819,10 @@ async def _answer_question(
     adapter_name: str,
     renderer,
     reads: asyncio.Semaphore,
-) -> tuple[str, dict[str, Any], TokenUsage]:
-    """Returns (name, jev-shaped answer dict, this question's TokenUsage). `reads` bounds
-    the engine reads in flight across one request's questions."""
+    options: ReadOptions = ReadOptions(),
+) -> tuple[str, dict[str, Any], TokenUsage, QuestionDiagnostics]:
+    """Returns (name, jev-shaped answer dict, this question's TokenUsage, its diagnostics).
+    `reads` bounds the engine reads in flight across one request's questions."""
     if q.type == "choice":
         keys = list(q.criteria)
         # An option without a description is described by its key, as vLLM's native strategy does.
@@ -721,7 +840,7 @@ async def _answer_question(
     # Over 128 labels: one request per chunk, same prompt, so later chunks hit the prefix cache.
     async def read(chunk: list[int]):
         async with reads:
-            return await _fetch_label_logprobs(chat, served_model, adapter_name, msgs, chunk)
+            return await _fetch_label_logprobs(chat, served_model, adapter_name, msgs, chunk, options.cache_salt)
 
     tasks = [asyncio.ensure_future(read(chunk)) for chunk in _chunk_label_ids(label_ids)]
     try:
@@ -743,8 +862,9 @@ async def _answer_question(
     # Every chunk is a separate engine request over the same prompt, so usage counts each.
     usage = _sum_usage([_chunk_usage(resp.usage) for resp in responses])
 
-    _log_label_mass(name, [by_id[tid] for tid in label_ids])
+    label_mass = _log_label_mass(name, [by_id[tid] for tid in label_ids])
     probs = _softmax([by_id[tid] for tid in label_ids])
+    diagnostics = QuestionDiagnostics(label_mass, _sampled_token_id(responses[0]) in set(label_ids))
 
     if q.type == "choice":
         j = max(range(len(keys)), key=lambda i: probs[i])
@@ -765,7 +885,7 @@ async def _answer_question(
             "confidence": _score_confidence(probs),
         }
 
-    return name, answer, usage
+    return name, answer, usage, diagnostics
 
 
 class _Limiter:
@@ -816,7 +936,9 @@ async def _run_until_disconnect(request: Request, work):
         await _cancel_pending([work_task, watch_task])
 
 
-async def _answer_all(state, state_value: Any, questions: list[tuple[str, Question]]) -> list:
+async def _answer_all(
+    state, state_value: Any, questions: list[tuple[str, Question]], options: ReadOptions = ReadOptions()
+) -> list:
     """Answer every question concurrently, at most MAX_READS_PER_REQUEST engine reads at a
     time; if one fails, cancel the rest and re-raise."""
     reads = asyncio.Semaphore(MAX_READS_PER_REQUEST)
@@ -832,6 +954,7 @@ async def _answer_all(state, state_value: Any, questions: list[tuple[str, Questi
                 state.decision_adapter_name,
                 state.decision_renderer,
                 reads,
+                options,
             )
         )
         for key, q in questions
@@ -864,8 +987,8 @@ def _flatten_parts(parts: list[Any]) -> str:
 
 
 def _decisions_input_to_state(data: str | list[DecisionInputMessage]) -> str:
-    """Flatten OpenAI's `input` (a string, or user messages with text, image and JSON
-    parts) into the state string both routes share: message texts joined with blank lines."""
+    """Flatten OpenAI's `input` (a string, or user messages with text and JSON parts) into the state
+    string both routes share: the messages' texts joined with blank lines."""
     if isinstance(data, str):
         return data
     return "\n\n".join(m.content if isinstance(m.content, str) else _flatten_parts(m.content) for m in data)
@@ -974,21 +1097,25 @@ async def _handle_systemone(raw_request: Request) -> Response:
             return _error(HTTPStatus.SERVICE_UNAVAILABLE, _BUSY)
         try:
             results = await _run_until_disconnect(
-                raw_request, _answer_all(state, req.state, list(req.questions.items()))
+                raw_request,
+                _answer_all(state, req.state, list(req.questions.items()), ReadOptions(req.cache_salt)),
             )
         except EngineError as e:
             return _error(e.status, str(e))
     if results is None:
         return Response(status_code=499)
 
-    answers = {name: answer for name, answer, _ in results}
-    usage = _sum_usage([question_usage for _, _, question_usage in results])
+    answers = {name: answer for name, answer, _, _ in results}
+    usage = _sum_usage([question_usage for _, _, question_usage, _ in results])
 
     return JSONResponse(
         content={
             "model": state.decision_served_model,
             "answers": answers,
             "usage": {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens},
+            "diagnostics": {
+                name: {"label_mass": d.label_mass, "argmax_is_label": d.argmax_is_label} for name, _, _, d in results
+            },
         }
     )
 
@@ -1039,7 +1166,9 @@ async def _handle_decisions(raw_request: Request) -> Response:
     except ValueError as e:
         return _openai_error(HTTPStatus.BAD_REQUEST, str(e))
 
-    work = _answer_all(state, state_text, [(key, internal) for key, internal, _ in translated])
+    work = _answer_all(
+        state, state_text, [(key, internal) for key, internal, _ in translated], ReadOptions(req.cache_salt)
+    )
     async with state.decision_limiter.slot() as admitted:
         if not admitted:
             work.close()
@@ -1053,9 +1182,9 @@ async def _handle_decisions(raw_request: Request) -> Response:
 
     answers = [
         _internal_answer_to_decisions(req.questions[int(key)], extras, answer)
-        for (_, _, extras), (key, answer, _) in zip(translated, results)
+        for (_, _, extras), (key, answer, _, _) in zip(translated, results)
     ]
-    usage = _sum_usage([question_usage for _, _, question_usage in results])
+    usage = _sum_usage([question_usage for _, _, question_usage, _ in results])
 
     return JSONResponse(
         content={

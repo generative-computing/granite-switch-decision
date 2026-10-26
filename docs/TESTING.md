@@ -40,7 +40,7 @@ it needs `gitleaks` on `PATH` for the last of those.
   it is never committed. To move the pin, set `OPENAI_COMMIT` in `tests/specs.py` and compute
   `OPENAI_SHA256` with `curl -fsSL https://raw.githubusercontent.com/openai/openai-openapi/<sha>/openapi.json | shasum -a 256`.
   Offline, the test skips and says how to supply a local copy (`DECISION_OPENAI_SPEC`).
-  Deliberate limits are listed as named exceptions, in the README's "Deliberate exceptions on /v1/decisions".
+  Unsupported requests are listed as named cases, matching the README's "What /v1/decisions doesn't support".
 - `tests/test_systemone_spec.py`: `/v1/systemone` validated against jev's wire models from
   TypeSafe's MIT-licensed `typesafe-sdk` (a dev dependency), which TypeSafe generates
   from its API spec. Those models omit the spec's bounds on choice options (1-255) and
@@ -70,7 +70,7 @@ Python standard library unless noted.
 
 | Command | What it checks |
 |---|---|
-| `python3 scripts/e2e_check.py --base-url URL` | Both routes' answer shapes and parity, input flattening, boolean values, error shapes, usage, chat on the same server, prefix-cache hits. Add `--system-prompt` when the server runs with `DECISION_EXPERIMENTAL_SYSTEM_PROMPT=1`. |
+| `python3 scripts/e2e_check.py --base-url URL` | Both routes' answer shapes and parity, input flattening, error shapes, usage, vLLM's request fields and `cache_salt`, chat on the same server, prefix-cache hits. Add `--system-prompt` when the server runs with `DECISION_EXPERIMENTAL_SYSTEM_PROMPT=1`. |
 | `python3 scripts/probe_check.py --base-url URL` | Question cap, size guard (no engine work for oversized requests), body limits, special-token and marker escaping, options without descriptions, disconnect cancellation. |
 | `python3 scripts/probe_check.py --base-url URL --max-concurrent N` | Adds the concurrency limit: a burst against `DECISION_MAX_CONCURRENT_REQUESTS=N` gets 200s and 503s. |
 | `python3 scripts/probe_check.py --base-url URL --load 30` | Adds a load test at 1, 8 and 32 clients with chat latency alongside. Reported, not asserted. |

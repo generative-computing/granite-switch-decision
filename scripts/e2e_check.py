@@ -26,6 +26,12 @@ Exit code 0 means every check passed. Checks:
   errors              400s with OpenAI's error shape (empty questions, image
                       input, 11 score levels) and jev's 422 shape on the
                       systemone route
+  vllm_fields         vLLM's request fields on /v1/systemone: enable_thinking false
+                      accepted; request-level instructions, adapter_name, other
+                      template kwargs, a bad cache_salt, joint and images refused;
+                      system messages refused on /v1/decisions; a
+                      cache_salt gives its own prefix cache (needs
+                      --enable-prompt-tokens-details)
   chat                /v1/chat/completions still works on the shared server
                       (skip with --skip-chat)
   prefix_cache        prefix-cache hits for a decision after a chat or a
@@ -199,6 +205,12 @@ def check_systemone_shapes(client: Client, model: str) -> Check:
     check.expect_equal(severity.get("type"), "score", "severity type")
     check.expect(isinstance(severity.get("score"), (int, float)), "severity score")
     check.expect_equal(len(severity.get("probabilities", {})), 3, "severity probabilities")
+    diagnostics = body.get("diagnostics", {})
+    check.expect(set(diagnostics) == set(answers), "diagnostics keys match the answers")
+    for name, entry in diagnostics.items():
+        mass = entry.get("label_mass")
+        check.expect(isinstance(mass, (int, float)) and 0.0 <= mass <= 1.0 + 1e-6, f"{name} label_mass in [0, 1]")
+        check.expect(isinstance(entry.get("argmax_is_label"), bool), f"{name} argmax_is_label is a boolean")
     return check
 
 
@@ -386,6 +398,57 @@ def check_errors(client: Client, model: str) -> Check:
     return check
 
 
+def check_vllm_fields(client: Client, model: str) -> Check:
+    """vLLM's own request fields: accepted where the plugin supports them, refused (and never
+    forwarded) where it cannot, and `cache_salt` really partitions the prefix cache."""
+    check = Check("vllm_fields")
+    body = {**SYSTEMONE_BODY, "model": model}
+    status, _ = client.post("/v1/systemone", {**body, "chat_template_kwargs": {"enable_thinking": False}})
+    check.expect_equal(status, 200, "enable_thinking: false")
+    status, _ = client.post("/v1/systemone", {**body, "instructions": "Answer strictly."})
+    check.expect_equal(status, 422, "request-level instructions")
+    status, _ = client.post("/v1/systemone", {**body, "chat_template_kwargs": {"adapter_name": "guardian-core"}})
+    check.expect_equal(status, 422, "adapter_name in chat_template_kwargs")
+    status, _ = client.post("/v1/systemone", {**body, "chat_template_kwargs": {"documents": [{"text": "x"}]}})
+    check.expect_equal(status, 422, "unsupported chat_template_kwargs key")
+    status, _ = client.post("/v1/systemone", {**body, "cache_salt": "a/b"})
+    check.expect_equal(status, 422, "cache_salt with a forbidden character")
+    status, _ = client.post("/v1/systemone", {**body, "joint": True})
+    check.expect_equal(status, 422, "joint: true")
+    status, _ = client.post("/v1/systemone", {**body, "images": ["data:image/png;base64,AA"]})
+    check.expect_equal(status, 422, "images")
+    status, _ = client.post("/v1/decisions", {**DECISIONS_BODY, "model": model, "instructions": "x"})
+    check.expect_equal(status, 400, "instructions on /v1/decisions")
+    system = [{"role": "system", "content": "Be terse."}, {"role": "user", "content": STATE}]
+    status, _ = client.post("/v1/decisions", {**DECISIONS_BODY, "model": model, "input": system})
+    check.expect_equal(status, 400, "system message on /v1/decisions")
+
+    # A fresh salt starts with an empty cache, the same salt then hits it, and another salt (or none) does not.
+    text = f"Ticket {uuid.uuid4().hex}. " + TICKET * 6
+    salted = {
+        "model": model,
+        "input": text,
+        "cache_salt": f"salt-{uuid.uuid4().hex}",
+        "questions": [{"type": "predicate", "instructions": "Does this need urgent attention?"}],
+    }
+
+    def cached(request: dict) -> int:
+        _, response = client.post("/v1/decisions", request)
+        return response.get("usage", {}).get("input_tokens_details", {}).get("cached_tokens", 0)
+
+    first, second = cached(salted), cached(salted)
+    other = cached({**salted, "cache_salt": f"salt-{uuid.uuid4().hex}"})
+    unsalted = cached({k: v for k, v in salted.items() if k != "cache_salt"})
+    check.notes.append(
+        f"cache_salt: first {first}, same salt again {second}, other salt {other}, no salt {unsalted} cached tokens"
+    )
+    check.expect(first == 0, f"a fresh salt read {first} tokens from the cache")
+    check.expect(second > 0, "the same salt did not hit the cache")
+    check.expect(other == 0, f"another salt read {other} tokens from the cache")
+    check.expect(unsalted == 0, f"no salt read {unsalted} tokens from the salted cache")
+    return check
+
+
 def check_chat(client: Client, model: str) -> Check:
     check = Check("chat")
     status, body = client.post(
@@ -570,6 +633,7 @@ def main() -> int:
         check_boolean_values(client, model),
         check_usage(client, model),
         check_errors(client, model),
+        check_vllm_fields(client, model),
     ]
     if not args.skip_chat:
         checks.append(check_chat(client, model))

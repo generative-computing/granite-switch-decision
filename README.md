@@ -4,12 +4,15 @@ Decision APIs for [Granite Switch](https://github.com/generative-computing/grani
 vLLM plugin. Ask a question about some text and get back probabilities, from the same server and
 GPU cache that already serves `/v1/chat/completions`.
 
-- `POST /v1/decisions` follows [OpenAI's Decisions API](https://developers.openai.com/api/docs/guides/decisions).
-  The official OpenAI SDKs work once you change `base_url`.
+- `POST /v1/decisions` follows [OpenAI's Decisions API](https://developers.openai.com/api/docs/guides/decisions)
+  for text input, and the official OpenAI SDKs work once you change `base_url`. A few parts of the API aren't
+  supported, and those requests get a clear error ([details](#what-v1decisions-doesnt-support)).
 - `POST /v1/systemone` follows [jev's system-one API](https://docs.typesafe.ai/api).
 
 Each question is answered with one engine read of the adapter's single-token option labels, so
 callers do not need a prompt format, an invocation marker or a label scheme.
+
+With the public Granite Switch checkpoints, results are comparable with those on their model cards.
 
 You can run it as a container or add it to a vLLM install you already have. Start with
 [Quick start](#quick-start). What has and has not been tested is in
@@ -108,6 +111,25 @@ curl http://localhost:8000/v1/decisions -H "Content-Type: application/json" -d '
 [examples/decisions.md](examples/decisions.md) has the OpenAI SDK, all three question types and the
 equivalent `/v1/systemone` request. For equivalent questions both routes build the same prompt and
 return the same probabilities.
+
+### More request options
+
+`/v1/systemone` also accepts the extra fields on vLLM's own endpoint, so most clients written for vLLM work as they
+are.
+
+- **`cache_salt`** keeps a request's prefix cache separate from everyone else's. The cache is shared, so a fast
+  response (or a `cached_tokens` count) can show that someone has already sent the same prompt. If you serve several
+  tenants, have your gateway set a long random `cache_salt` for each. It's a privacy measure, not authentication.
+  `/v1/decisions` accepts it too.
+- **`chat_template_kwargs`** may only be `{"enable_thinking": false}`. The server always chooses the adapter.
+- **`joint`, `images`, `audio`, `videos`, `priority`, `request_id`** are accepted at their defaults. This model reads
+  text, one question at a time, so other values get a 422.
+- **`model`** is required here, though vLLM makes it optional.
+
+Each question in a `/v1/systemone` response also carries `diagnostics`: `label_mass`, how much probability the model
+put on the option labels (a low value usually means a wrong marker or layout), and `argmax_is_label`. OpenAI's
+response schema doesn't allow extra fields, so `/v1/decisions` has none. `confidence` uses jev's formula, so it isn't
+comparable with vLLM's.
 
 ## Secure it before you expose it
 
@@ -219,10 +241,9 @@ same prompt, served from the prefix cache.
 - **Caller text is escaped.** Special tokens and the invocation marker inside the state, instructions
   or descriptions are broken with an invisible U+2060, so they cannot forge turns or move the adapter's
   activation point.
-- **Input.** `input` is a string or `user` messages of text and `input_json` parts. A JSON part is
-  rendered as compact JSON, the way an object `state` is on `/v1/systemone`, and a question's
-  `instructions` may be a string or text and JSON parts. Images are rejected, because the trained
-  layout has one text state turn. `/v1/systemone` rejects unknown fields and `box` questions.
+- **Input.** `input` is a string or a list of user messages. A message can hold text and `input_json` parts, which
+  are written as compact JSON, as an object `state` is on `/v1/systemone`. A question's `instructions` can be a
+  string or text and JSON parts. `/v1/systemone` rejects unknown fields and `box` questions.
 - **Size.** The state, instructions and options of each question are counted before any engine work:
   at most 400 questions, 32k tokens per question and 64k per request (262k with
   `TypeSafe-Danger-Zone-Long-Context: true` on `/v1/systemone`), all capped by `--max-model-len`.
@@ -237,25 +258,22 @@ same prompt, served from the prefix cache.
 - **Cancellation.** A client that disconnects cancels its request's engine work.
 - **Errors.** `/v1/decisions` uses OpenAI's error shape and `/v1/systemone` uses jev's
   `HTTPValidationError` for 422s. Engine errors keep vLLM's status code.
+- **Repeat requests.** The same request can return slightly different probabilities, depending on how it is
+  batched and whether it hits the prefix cache, so a near-tie can flip. A different GPU or tensor-parallel size can
+  differ a little more. vLLM's `VLLM_BATCH_INVARIANT=1` aims to make repeats exact; we haven't tried it here.
 - **Not provided.** Authentication (use vLLM's `--api-key`), rate limiting and `refusal` answers.
-  Engine reads are not bit-identical between batched and solo requests, so repeated calls can differ in
-  the third decimal place.
 
-### Deliberate exceptions on /v1/decisions
+### What /v1/decisions doesn't support
 
-The route follows OpenAI's Decisions schema at the general-availability revision. These requests are
-valid in that schema and this server answers each with a 400 in OpenAI's error shape, because it serves
-a text-only decision adapter whose trained layout has one text state turn:
+The decision adapter reads one block of text and a question, and this server keeps to that layout so results stay
+predictable. So a few requests that OpenAI's schema allows get a 400 that names the part:
 
-- `input_image` parts, in `input` or in a question's `instructions`.
-- `developer`, `system` and `assistant` messages.
-- `function_call`, `function_call_output`, `custom_tool_call` and `custom_tool_call_output` items.
+- developer, system and assistant messages (put what the questions are about in a user message)
+- tool calls and tool outputs
+- images, in `input` or in a question's `instructions`
+- choices that would merge into one: two with the same value, or `"true"` and `true`
 
-It never returns `refusal` answers. It also answers a few requests the schema rejects: a `null` question
-`name`, a `prompt_cache_options.ttl` other than `30m`, and a `prompt_cache_key` over 64 characters. An
-`input_json` part larger than the schema's limits (256 KiB, 10,000 values, 32 levels) is accepted and
-bounded by this server's own limits (32 MiB bodies, 64 levels of nesting and the token caps above).
-`tests/test_openai_spec.py` pins each of these.
+The route never returns `refusal` answers, and `/v1/systemone` likewise refuses request-level `instructions`.
 
 ## Upstream status
 

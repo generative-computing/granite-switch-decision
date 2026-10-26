@@ -149,7 +149,7 @@ def test_input_image_rejected():
 
 def test_input_json_part_flattens_like_an_object_state():
     """A JSON part is compact JSON text, the rule an object `state` follows on the systemone route."""
-    data = {"ticket": {"body": "Refund the duplicate charge."}, "order": {"charges": [49, 49]}}
+    data = {"ticket": {"body": "Please reverse the second payment."}, "order": {"payments": [49, 49]}}
     parsed = [
         sp.DecisionInputMessage.model_validate({"role": "user", "content": [{"type": "input_json", "data": data}]})
     ]
@@ -210,7 +210,53 @@ def test_instruction_parts_reject_an_empty_list_and_cache_breakpoints():
         sp.DecisionQuestion.model_validate(_predicate(instructions=[part]))
 
 
-def test_input_non_user_role_rejected():
+def _req_input(*items):
+    return sp.DecisionRequest.model_validate(_request([_predicate()], input=list(items))).input
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"role": "developer", "content": "Be terse."},
+        {"role": "system", "content": [{"type": "input_text", "text": "Be terse."}]},
+        {"role": "assistant", "content": "Let me check."},
+        {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "ok"}, {"type": "refusal", "refusal": "no"}],
+        },
+        {"type": "function_call", "call_id": "c", "name": "f", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c", "output": "42"},
+        {"type": "custom_tool_call", "call_id": "c", "name": "t", "input": "x"},
+        {"type": "custom_tool_call_output", "call_id": "c", "output": [{"type": "input_text", "text": "y"}]},
+    ],
+    ids=[
+        "developer",
+        "system",
+        "assistant",
+        "assistant parts",
+        "function call",
+        "function output",
+        "custom call",
+        "custom output",
+    ],
+)
+def test_developer_system_assistant_and_tool_items_get_a_400_that_says_what_to_do(item):
+    with pytest.raises(ValidationError, match="not supported: the decision adapter reads user text"):
+        _req_input({"role": "user", "content": "hi"}, item)
+
+
+def test_unknown_roles_and_item_types_are_still_rejected():
+    for item in ({"role": "tool", "content": "x"}, {"type": "mcp_call", "call_id": "c"}):
+        with pytest.raises(ValidationError):
+            _req_input(item)
+
+
+def test_user_only_input_flattens_exactly_as_before():
+    items = _req_input({"role": "user", "content": "first"}, {"role": "user", "content": "second"})
+    assert sp._decisions_input_to_state(items) == "first\n\nsecond"
+
+
+def test_the_user_message_model_still_refuses_other_roles():
     with pytest.raises(ValidationError):
         sp.DecisionInputMessage.model_validate({"role": "assistant", "content": "x"})
 
@@ -350,7 +396,7 @@ def test_score_answer_carries_original_labels():
 
 @pytest.fixture()
 def client(monkeypatch):
-    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer, reads=None):
+    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer, reads=None, options=None):
         if q.type == "choice":
             keys = list(q.criteria)
             probs = [0.8, 0.2] + [0.0] * (len(keys) - 2)
@@ -371,7 +417,12 @@ def client(monkeypatch):
                 "probabilities": {str(i): 1.0 / count for i in range(count)},
                 "confidence": 0.3,
             }
-        return name, answer, sp.TokenUsage(input_tokens=10, output_tokens=1, cached_tokens=4)
+        return (
+            name,
+            answer,
+            sp.TokenUsage(input_tokens=10, output_tokens=1, cached_tokens=4),
+            sp.QuestionDiagnostics(0.97, True),
+        )
 
     monkeypatch.setattr(sp, "_answer_question", fake_answer)
 

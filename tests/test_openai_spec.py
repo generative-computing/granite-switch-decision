@@ -96,29 +96,48 @@ VALID = {
     "null optional fields": _body(prompt_cache_key=None, prompt_cache_options=None, safety_identifier=None),
 }
 
-# Spec-valid requests this text decision adapter rejects on purpose (README, "Deliberate
-# exceptions on /v1/decisions"). Each must fail with a 400 in OpenAI's error shape.
+# Spec-valid requests this text decision adapter rejects on purpose (README, "What
+# /v1/decisions doesn't support"). Each must fail with a 400 in OpenAI's error shape.
 UNSUPPORTED = {
+    "system message": _body(input=[_message("system", "Be terse."), _message("user", "hi")]),
+    "developer message with text parts": _body(
+        input=[_message("developer", [{"type": "input_text", "text": "Be terse."}]), _message("user", "hi")]
+    ),
+    "assistant message": _body(input=[_message("user", "hi"), _message("assistant", "hello")]),
+    "assistant message with output_text and refusal parts": _body(
+        input=[
+            _message("user", "hi"),
+            _message("assistant", [{"type": "output_text", "text": "hello"}, {"type": "refusal", "refusal": "no"}]),
+        ]
+    ),
+    "function call and output": _body(
+        input=[
+            {"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": "42"},
+        ]
+    ),
+    "custom tool call and output": _body(
+        input=[
+            {"type": "custom_tool_call", "call_id": "c1", "name": "t", "input": "x"},
+            {"type": "custom_tool_call_output", "call_id": "c1", "output": [{"type": "input_text", "text": "y"}]},
+        ]
+    ),
     "image part": _body(input=[_message("user", [{"type": "input_image", "image_url": "https://x.test/y.png"}])]),
+    "duplicate choice values": _body(questions=[{**CHOICE, "choices": [{"value": "a"}, {"value": "a"}]}]),
     "image part with detail": _body(
         input=[_message("user", [{"type": "input_image", "image_url": "data:image/png;base64,AA", "detail": "low"}])]
     ),
     "image in question instructions": _body(
         questions=[{**PREDICATE, "instructions": [{"type": "input_image", "image_url": "https://x.test/y.png"}]}]
     ),
-    "system message": _body(input=[_message("system", "Be terse."), _message("user", "hi")]),
-    "developer message": _body(input=[_message("developer", "Be terse."), _message("user", "hi")]),
-    "assistant message": _body(input=[_message("user", "hi"), _message("assistant", "hello")]),
-    "function call items": _body(
+    "image in a tool output": _body(
         input=[
             {"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
-            {"type": "function_call_output", "call_id": "c1", "output": "42"},
-        ]
-    ),
-    "custom tool call items": _body(
-        input=[
-            {"type": "custom_tool_call", "call_id": "c1", "name": "t", "input": "x"},
-            {"type": "custom_tool_call_output", "call_id": "c1", "output": "y"},
+            {
+                "type": "function_call_output",
+                "call_id": "c1",
+                "output": [{"type": "input_image", "image_url": "https://x.test/y.png"}],
+            },
         ]
     ),
 }
@@ -156,6 +175,7 @@ INVALID = {
 
 # Spec-invalid requests the plugin answers anyway: the fields are accepted and ignored,
 # or a missing name is treated as one, so tightening them would only break clients.
+# `input_json` over OpenAI's stated size limits is also accepted; this server's own limits apply.
 ACCEPTED_LENIENTLY = {
     "null question name": _body(questions=[{**PREDICATE, "name": None}]),
     "unsupported cache ttl": _body(prompt_cache_options={"ttl": "1h"}),
@@ -169,7 +189,7 @@ def _errors(validator, instance):
 
 @pytest.fixture()
 def client(monkeypatch):
-    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer, reads=None):
+    async def fake_answer(name, q, state, chat, tok, served_model, adapter_name, renderer, reads=None, options=None):
         if q.type == "choice":
             keys = list(q.criteria)
             answer = {
@@ -189,7 +209,12 @@ def client(monkeypatch):
                 "probabilities": {str(i): 1.0 / n for i in range(n)},
                 "confidence": 0.3,
             }
-        return name, answer, sp.TokenUsage(input_tokens=10, output_tokens=1, cached_tokens=4)
+        return (
+            name,
+            answer,
+            sp.TokenUsage(input_tokens=10, output_tokens=1, cached_tokens=4),
+            sp.QuestionDiagnostics(0.97, True),
+        )
 
     monkeypatch.setattr(sp, "_answer_question", fake_answer)
 
@@ -242,6 +267,35 @@ def test_lenient_acceptance_still_returns_a_spec_valid_response(client, name):
     resp = client.post("/v1/decisions", json=body)
     assert resp.status_code == 200, resp.text
     assert not _errors(RESPONSE, resp.json())
+
+
+# vLLM's own /v1/decisions takes these two fields beyond the schema (cache_salt, joint).
+VLLM_EXTENSIONS = {
+    "cache salt": _body(cache_salt="tenant-1"),
+    "joint false": _body(joint=False),
+}
+
+
+@pytest.mark.parametrize("name", VLLM_EXTENSIONS)
+def test_vllm_extension_is_accepted_with_a_spec_valid_response(client, name):
+    body = VLLM_EXTENSIONS[name]
+    assert _errors(REQUEST, body), "test case is spec-valid, so it is not an extension"
+    resp = client.post("/v1/decisions", json=body)
+    assert resp.status_code == 200, resp.text
+    assert not _errors(RESPONSE, resp.json())
+
+
+def test_the_response_has_no_diagnostics_because_the_schema_forbids_extra_fields(client):
+    data = client.post("/v1/decisions", json=_body()).json()
+    assert "diagnostics" not in data and not _errors(RESPONSE, data)
+
+
+@pytest.mark.parametrize("field", ["instructions", "chat_template_kwargs", "priority", "request_id"])
+def test_systemone_only_fields_are_rejected_on_decisions(client, field):
+    value = {"chat_template_kwargs": {}, "priority": 0}.get(field, "x")
+    resp = client.post("/v1/decisions", json=_body(**{field: value}))
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "invalid_request_error"
 
 
 def test_usage_reports_cached_tokens_summed_over_questions(client):

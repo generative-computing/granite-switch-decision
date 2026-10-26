@@ -482,7 +482,7 @@ def test_answer_question_counts_every_chunk_of_a_chunked_prompt(
     each call prefills (or reads from cache) its own copy of the prompt."""
     calls = []
 
-    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk):
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk, cache_salt=None):
         calls.append(label_ids_chunk)
         cached, written = first_chunk_cache if len(calls) == 1 else (100, 0)
         return _fake_chat_response(label_ids_chunk, 100, cached, written)
@@ -492,7 +492,7 @@ def test_answer_question_counts_every_chunk_of_a_chunked_prompt(
     q = sp.Question(type="choice", instructions="Which?", criteria=criteria)
     renderer = lambda tok, state, instructions, descs: ([], list(range(1000, 1000 + len(descs))))  # noqa: E731
 
-    _, answer, usage = asyncio.run(
+    _, answer, usage, _ = asyncio.run(
         sp._answer_question("q", q, "state", None, None, "m", "decision", renderer, asyncio.Semaphore(8))
     )
 
@@ -590,7 +590,7 @@ def test_choice_without_descriptions_renders_its_option_keys(monkeypatch):
         seen["descs"] = descs
         return [], list(range(len(descs)))
 
-    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk):
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk, cache_salt=None):
         return _fake_chat_response(label_ids_chunk, 10, None, None)
 
     monkeypatch.setattr(sp, "_fetch_label_logprobs", fake_fetch)
@@ -711,7 +711,7 @@ def test_engine_error_status_need_not_be_a_standard_http_status():
 
 
 def test_missing_label_logprob_is_an_engine_error(monkeypatch):
-    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk):
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk, cache_salt=None):
         return _fake_chat_response(label_ids_chunk[:-1], 10, None, None)
 
     monkeypatch.setattr(sp, "_fetch_label_logprobs", fake_fetch)
@@ -726,7 +726,7 @@ def test_a_failing_label_chunk_cancels_its_sibling(monkeypatch):
     running (asyncio.run would cancel it at shutdown anyway, so check inside the loop)."""
     sibling = {}
 
-    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk):
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk, cache_salt=None):
         if label_ids_chunk[0] == 0:
             await asyncio.sleep(0)
             raise sp.EngineError("boom", 500)
@@ -748,7 +748,7 @@ def test_a_failing_label_chunk_cancels_its_sibling(monkeypatch):
 def test_engine_reads_per_request_are_bounded(monkeypatch):
     in_flight, peak = [0], [0]
 
-    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk):
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk, cache_salt=None):
         in_flight[0] += 1
         peak[0] = max(peak[0], in_flight[0])
         await asyncio.sleep(0.01)
@@ -823,3 +823,191 @@ def test_label_mass_warns_below_the_floor_and_never_raises(caplog):
         sp._log_label_mass("q", [math.log(0.6), math.log(0.39)])
     levels = [r.levelname for r in caplog.records]
     assert levels == ["WARNING", "DEBUG"]
+
+
+# --------------------------------------------------------------------------------------------
+# vLLM's request fields on /v1/systemone, cache_salt, and diagnostics
+# --------------------------------------------------------------------------------------------
+
+
+def _s1(**fields):
+    return {"model": "m", "state": "s", "questions": {"q": {"type": "noul", "instructions": "q?"}}, **fields}
+
+
+def test_systemone_accepts_the_vllm_request_fields():
+    req = sp.SystemOneRequest.model_validate(
+        _s1(
+            chat_template_kwargs={"enable_thinking": False},
+            cache_salt="tenant-1",
+            joint=False,
+            images=[],
+            audio=None,
+            videos=[],
+            priority=0,
+            request_id="abc",
+        )
+    )
+    assert req.cache_salt == "tenant-1"
+
+
+def test_systemone_model_is_required():
+    with pytest.raises(PydanticValidationError):
+        sp.SystemOneRequest.model_validate({"state": "s", "questions": {"q": {"type": "noul"}}})
+
+
+@pytest.mark.parametrize(
+    ("fields", "match"),
+    [
+        ({"chat_template_kwargs": {"adapter_name": "other"}}, "adapter_name"),
+        ({"chat_template_kwargs": {"enable_thinking": True}}, "enable_thinking"),
+        ({"chat_template_kwargs": {"documents": [{"text": "<|decision|>"}]}}, "documents"),
+        ({"chat_template_kwargs": {"tools": []}}, "tools"),
+        ({"instructions": "Be strict."}, "request-level `instructions`"),
+        ({"instructions": ""}, "request-level `instructions`"),
+        ({"joint": True}, "joint"),
+        ({"images": ["data:image/png;base64,AA"]}, "images"),
+        ({"audio": ["x"]}, "audio"),
+        ({"videos": ["x"]}, "videos"),
+        ({"priority": 1}, "priority"),
+    ],
+)
+def test_systemone_rejects_what_a_text_adapter_cannot_serve(fields, match):
+    with pytest.raises(PydanticValidationError, match=match):
+        sp.SystemOneRequest.model_validate(_s1(**fields))
+
+
+@pytest.mark.parametrize("salt", ["", "a" * 129, "a@b", "a/b", "a\\b", "a\x00b"])
+def test_cache_salt_is_validated_like_vllm(salt):
+    with pytest.raises(PydanticValidationError, match="cache_salt"):
+        sp.SystemOneRequest.model_validate(_s1(cache_salt=salt))
+    with pytest.raises(PydanticValidationError, match="cache_salt"):
+        sp.DecisionRequest.model_validate(
+            {
+                "model": "m",
+                "input": "x",
+                "questions": [{"type": "predicate", "instructions": "q?"}],
+                "cache_salt": salt,
+            }
+        )
+
+
+def test_cache_salt_at_the_limit_is_accepted():
+    sp.SystemOneRequest.model_validate(_s1(cache_salt="a" * 128))
+
+
+def test_decisions_takes_only_cache_salt_and_joint_from_vllm():
+    base = {"model": "m", "input": "x", "questions": [{"type": "predicate", "instructions": "q?"}]}
+    sp.DecisionRequest.model_validate({**base, "cache_salt": "t", "joint": False})
+    for field, value in (("instructions", "ctx"), ("chat_template_kwargs", {}), ("priority", 0), ("request_id", "r")):
+        with pytest.raises(PydanticValidationError):
+            sp.DecisionRequest.model_validate({**base, field: value})
+    with pytest.raises(PydanticValidationError, match="joint"):
+        sp.DecisionRequest.model_validate({**base, "joint": True})
+
+
+def _label_fakes(monkeypatch, calls):
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk, cache_salt=None):
+        calls.append({"salt": cache_salt, "adapter": adapter_name, "ids": label_ids_chunk, "msgs": msgs})
+        return _fake_chat_response(label_ids_chunk, 100, None, None)
+
+    monkeypatch.setattr(sp, "_fetch_label_logprobs", fake_fetch)
+
+
+def test_cache_salt_reaches_every_chunk_read(monkeypatch):
+    calls = []
+    _label_fakes(monkeypatch, calls)
+    q = sp.Question(type="choice", instructions="Which?", criteria={f"o{i}": None for i in range(200)})
+    renderer = lambda tok, state, instructions, descs, **kw: ([], list(range(len(descs))))  # noqa: E731
+    asyncio.run(
+        sp._answer_question(
+            "q", q, "s", None, None, "m", "decision", renderer, asyncio.Semaphore(8), sp.ReadOptions("tenant-1")
+        )
+    )
+    assert len(calls) == 2 and {c["salt"] for c in calls} == {"tenant-1"}
+
+
+def test_the_servers_adapter_is_the_only_one_ever_requested(monkeypatch):
+    """The engine request is built from the server's adapter name and the request's salt alone.
+    Caller `chat_template_kwargs` are validated and dropped, so they cannot reach it."""
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    captured = {}
+
+    class FakeRequest:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    class FakeResponse:
+        pass
+
+    class FakeChat:
+        async def create_chat_completion(self, req):
+            return FakeResponse()
+
+    protocol = ModuleType("vllm.entrypoints.openai.chat_completion.protocol")
+    protocol.ChatCompletionRequest, protocol.ChatCompletionResponse = FakeRequest, FakeResponse
+    serve = ModuleType("vllm.entrypoints.serve.engine.protocol")
+    serve.ErrorResponse = type("ErrorResponse", (), {})
+    for name, mod in (
+        ("vllm.entrypoints.openai.chat_completion.protocol", protocol),
+        ("vllm.entrypoints.serve.engine.protocol", serve),
+    ):
+        monkeypatch.setitem(sys.modules, name, mod)
+    for parent in (
+        "vllm",
+        "vllm.entrypoints",
+        "vllm.entrypoints.openai",
+        "vllm.entrypoints.openai.chat_completion",
+        "vllm.entrypoints.serve",
+        "vllm.entrypoints.serve.engine",
+    ):
+        monkeypatch.setitem(sys.modules, parent, sys.modules.get(parent) or ModuleType(parent))
+
+    asyncio.run(sp._fetch_label_logprobs(FakeChat(), "granite-switch", "decision", [], [1, 2], "tenant-1"))
+    assert captured["chat_template_kwargs"] == {"adapter_name": "decision"}
+    assert captured["cache_salt"] == "tenant-1"
+    asyncio.run(sp._fetch_label_logprobs(FakeChat(), "granite-switch", "decision", [], [1, 2]))
+    assert captured["cache_salt"] is None
+    assert SimpleNamespace  # keep the import used
+
+
+def test_a_caller_cannot_name_the_adapter_in_template_kwargs():
+    with pytest.raises(PydanticValidationError, match="set by the server"):
+        sp.SystemOneRequest.model_validate(_s1(chat_template_kwargs={"adapter_name": "guardian-core"}))
+
+
+def test_answer_question_reports_label_mass_and_argmax(monkeypatch):
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk, cache_salt=None):
+        resp = _fake_chat_response(label_ids_chunk, 10, None, None)
+        resp.choices[0].logprobs.content[0].token = f"token_id:{label_ids_chunk[1]}"
+        resp.choices[0].logprobs.content[0].top_logprobs = [
+            type(t)(token=t.token, logprob=lp)
+            for t, lp in zip(resp.choices[0].logprobs.content[0].top_logprobs, (math.log(0.2), math.log(0.7)))
+        ]
+        return resp
+
+    monkeypatch.setattr(sp, "_fetch_label_logprobs", fake_fetch)
+    q = sp.Question(type="noul", instructions="q?")
+    renderer = lambda tok, state, instructions, descs, **kw: ([], [10, 11])  # noqa: E731
+    _, answer, _, diagnostics = asyncio.run(
+        sp._answer_question("q", q, "s", None, None, "m", "decision", renderer, asyncio.Semaphore(8))
+    )
+    assert diagnostics.label_mass == pytest.approx(0.9)
+    assert diagnostics.argmax_is_label is True
+    assert answer["noul"] == pytest.approx(0.7 / 0.9)
+
+
+def test_argmax_is_not_a_label_when_the_engine_sampled_something_else(monkeypatch):
+    async def fake_fetch(chat, served_model, adapter_name, msgs, label_ids_chunk, cache_salt=None):
+        resp = _fake_chat_response(label_ids_chunk, 10, None, None)
+        resp.choices[0].logprobs.content[0].token = "token_id:999"
+        return resp
+
+    monkeypatch.setattr(sp, "_fetch_label_logprobs", fake_fetch)
+    q = sp.Question(type="noul", instructions="q?")
+    renderer = lambda tok, state, instructions, descs, **kw: ([], [10, 11])  # noqa: E731
+    *_, diagnostics = asyncio.run(
+        sp._answer_question("q", q, "s", None, None, "m", "decision", renderer, asyncio.Semaphore(8))
+    )
+    assert diagnostics.argmax_is_label is False
