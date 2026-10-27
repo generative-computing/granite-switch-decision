@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Long-context checks for a live granite-switch-decision server started with the
-8b checkpoint and --max-model-len 131072 (the checkpoint's maximum). Needs the
+"""Long-context checks for a live granite-switch-decision server.
+
+Start the server with the 8b checkpoint and --max-model-len 131072 (the checkpoint's maximum). Needs the
 checkpoint's tokenizer (transformers, unlike the other scripts, which are stdlib-only)
 to size the probe states. The 262,144-token danger-zone cap clamps to --max-model-len,
 so this exercises it up to 131,072; no released Switch checkpoint has more context.
@@ -11,12 +12,12 @@ so this exercises it up to 131,072; no released Switch checkpoint has more conte
 
 Exit code 0 means every check passed. Checks:
 
-  default_caps      a ~98k-token state is rejected without the header (the 32k
+  default_caps      a state of at least 90k tokens is rejected without the header (the 32k
                     per-question cap fires first; the 64k per-request cap is
                     checked separately with three ~22k questions)
   danger_zone       the same state with TypeSafe-Danger-Zone-Long-Context: true is
                     answered in one engine read, and its usage counts the tokens
-  max_model_len     a ~152k-token state with the header is rejected at the
+  max_model_len     a state of at least 140k tokens with the header is rejected at the
                     131,072 backstop
   decisions_route   /v1/decisions has no danger-zone escape: the big state is
                     rejected there too
@@ -64,9 +65,9 @@ def post(url, body, headers=None, timeout=1800):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base-url", required=True)
-    ap.add_argument("--tokenizer", required=True, help="path to the granite-switch-4.1-8b snapshot")
+    ap.add_argument("--tokenizer", required=True, help="the 8b checkpoint's tokenizer: a local path or a Hub id")
     ap.add_argument("--model", default="granite-switch")
     args = ap.parse_args()
 

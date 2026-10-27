@@ -2,8 +2,9 @@
 
 The plugin serves OpenAI's Decisions wire format (`POST /v1/decisions`) alongside
 `/v1/systemone`, over the same engine and the same decision adapter. Anything written
-against OpenAI's Decisions API (the official SDKs, pydantic-ai, plain HTTP) works
-against this server by changing `base_url` only.
+against OpenAI's Decisions API for text input (the official SDKs, plain HTTP) works by
+changing `base_url`. Requests that use parts the adapter cannot read get a 400; see the
+[README](../README.md#what-v1decisions-doesnt-support).
 
 ## curl
 
@@ -69,16 +70,16 @@ illustrative):
     {
       "type": "score",
       "name": "severity",
-      "score": 1.87,
+      "score": 1.73,
       "probabilities": [
         {"value": 0, "label": "can wait", "probability": 0.04},
         {"value": 1, "label": "this week", "probability": 0.19},
         {"value": 2, "label": "today", "probability": 0.77}
       ],
-      "confidence": 0.54
+      "confidence": 0.6
     }
   ],
-  "usage": {"input_tokens": 132, "output_tokens": 3, "total_tokens": 135}
+  "usage": {"input_tokens": 132, "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0}, "output_tokens": 3, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 135}
 }
 ```
 
@@ -151,4 +152,5 @@ curl http://localhost:8000/v1/systemone \
   `true` with the string `"true"` is rejected (the model cannot distinguish them).
 - Image `input` parts are rejected with a 400, because the decision adapter is text-only.
 - Errors use OpenAI's `{"error": {"message", "type", "param", "code"}}` shape.
-- `usage` reports input/output/total tokens, without OpenAI's `*_details` breakdowns.
+- `usage` reports input, output and total tokens, plus `input_tokens_details.cached_tokens` (prefix-cache hits) and
+  `output_tokens_details.reasoning_tokens` (always 0).

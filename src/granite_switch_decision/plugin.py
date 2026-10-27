@@ -41,7 +41,7 @@ _DEFAULT_ADAPTER_NAME = "decision"
 
 # jev: request body <= 32 MiB.
 MAX_BODY_BYTES = 32 * 1024 * 1024
-# jev: nesting <= 64 levels anywhere in the request body.
+# jev: at most 64 nested levels inside each of `state`, `instructions` and `criteria`.
 MAX_NESTING_DEPTH = 64
 # jev's context limits in tokens, raised by its long-context header; also capped by --max-model-len.
 DEFAULT_PER_QUESTION_TOKEN_LIMIT = 32_000
@@ -90,7 +90,7 @@ def _resolve_adapter_name(chat) -> str:
         return _DEFAULT_ADAPTER_NAME
     raise RuntimeError(
         f"{_ADAPTER_NAME_ENV} is not set, and this checkpoint's adapters {adapter_names!r} "
-        f"include no {_DEFAULT_ADAPTER_NAME!r} -- set {_ADAPTER_NAME_ENV} to the decision adapter's name."
+        f"include no {_DEFAULT_ADAPTER_NAME!r}. Set {_ADAPTER_NAME_ENV} to the decision adapter's name."
     )
 
 
@@ -154,8 +154,8 @@ def _check_joint(value: bool) -> bool:
 
 
 _NO_REQUEST_CONTEXT = (
-    "request-level `instructions` and developer or system messages are not supported: the decision adapter reads "
-    "the state and each question's own instructions. Put the context in the state."
+    "request-level `instructions` are not supported: the decision adapter reads the state and each question's "
+    "own instructions. Put the context in the state."
 )
 
 
@@ -253,7 +253,7 @@ class DecisionQuestionImage(BaseModel):
 
 
 class DecisionInputJson(BaseModel):
-    """A JSON object, or an array of objects, rendered as compact JSON text like an object `state`."""
+    """A JSON object, or an array of objects, rendered as single-line JSON text, like an object `state`."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -281,7 +281,7 @@ _MessagePart = Annotated[DecisionInputText | DecisionInputImage | DecisionInputJ
 class DecisionQuestion(BaseModel):
     """One OpenAI Decisions question (`predicate`/`choice`/`score`), with the field
     constraints of OpenAI's published spec: `instructions` required (a string, or text and
-    JSON parts), 2-255 unique choices, at most 10 score levels. `name` is optional, since
+    JSON parts), 2-255 unique choices, 2-10 score levels. `name` is optional, since
     answers are positional, so duplicate or missing names cannot collide (the response
     echoes the name or null)."""
 
@@ -507,9 +507,8 @@ def _validation_error_response(e: PydanticValidationError) -> JSONResponse:
 
 
 def _error(status: int, message: str) -> JSONResponse:
-    """For the status codes jev's OpenAPI spec does NOT give a documented body shape
-    for 400/413/415 (only 422's HTTPValidationError is in the spec); see
-    `_validation_error_response` for 422 itself."""
+    """Error body for 413 and 415, which jev's spec does not document; 422 is
+    `_validation_error_response`."""
     return JSONResponse(
         content={"error": {"message": message, "code": int(status)}},
         status_code=int(status),
@@ -519,7 +518,7 @@ def _error(status: int, message: str) -> JSONResponse:
 def _openai_error(status: int, message: str, param: str | None = None, code: str | None = None) -> JSONResponse:
     """OpenAI's documented error body for the /v1/decisions route
     (`{"error": {"message", "type", "param", "code"}}`): the official SDKs parse
-    this shape on this route, which is the point of speaking it."""
+    this shape on this route."""
     return JSONResponse(
         content={
             "error": {
@@ -599,8 +598,7 @@ def _softmax(logps: list[float]) -> list[float]:
 
 
 def _normalize_probs(probs: list[float]) -> list[float]:
-    """Shared normalization step both confidence formulas below start from --
-    uniform if the total is zero."""
+    """First step of both confidence formulas: normalize, falling back to uniform if the total is zero."""
     total = sum(probs)
     if total == 0:
         return [1.0 / len(probs)] * len(probs)
@@ -608,9 +606,8 @@ def _normalize_probs(probs: list[float]) -> list[float]:
 
 
 def _choice_confidence(probs: list[float]) -> float:
-    """jev's `confidence` formula for a choice answer. It is not the top-1 probability: it
-    rescales the top probability so a uniform distribution gives 0 and all mass on one
-    option gives 1, `(max(p) - 1/n) / (1 - 1/n)`."""
+    """jev's `confidence` for a choice: the top probability rescaled so a uniform distribution
+    gives 0 and all mass on one option gives 1, `(max(p) - 1/n) / (1 - 1/n)`."""
     if len(probs) == 1:
         return 1.0
     normalized = _normalize_probs(probs)
@@ -619,10 +616,9 @@ def _choice_confidence(probs: list[float]) -> float:
 
 
 def _score_confidence(probs: list[float]) -> float:
-    """jev's actual `confidence` formula for a score answer: 1 minus the expected
-    distance from the modal level, divided by the mean distance every level has from
-    the scale's midpoint (a uniform distribution's own expected distance). With two
-    levels this reduces to the same formula as `_choice_confidence`."""
+    """jev's `confidence` for a score: 1 minus the expected distance from the modal level over
+    the mean distance of a uniform distribution (levels measured from the scale's midpoint),
+    floored at 0. With two levels it equals `_choice_confidence`."""
     if len(probs) == 1:
         return 1.0
     normalized = _normalize_probs(probs)
@@ -708,7 +704,7 @@ _LABEL_MASS_WARN = 0.9
 
 
 def _log_label_mass(name: str, label_logprobs: list[float]) -> float:
-    """Log, and return, the probability mass the option labels hold before normalising. Low mass
+    """Log, and return, the probability mass the option labels hold before normalizing. Low mass
     means the model wanted a token outside the labels (a wrong marker, a broken layout).
     Observation only: answers are never gated on it."""
     mass = sum(math.exp(lp) for lp in label_logprobs)
@@ -825,7 +821,7 @@ async def _answer_question(
     `reads` bounds the engine reads in flight across one request's questions."""
     if q.type == "choice":
         keys = list(q.criteria)
-        # An option without a description is described by its key, as vLLM's native strategy does.
+        # An option without a description is described by its key.
         descs = [k if q.criteria[k] in (None, "") else q.criteria[k] for k in keys]
     elif q.type == "noul":
         crit = q.criteria if isinstance(q.criteria, dict) else {}
@@ -837,7 +833,7 @@ async def _answer_question(
 
     msgs, label_ids = renderer(tok, state, q.instructions, descs)
 
-    # Over 128 labels: one request per chunk, same prompt, so later chunks hit the prefix cache.
+    # Over 128 labels: one request per chunk over the same prompt, so chunks can share the prefix cache.
     async def read(chunk: list[int]):
         async with reads:
             return await _fetch_label_logprobs(chat, served_model, adapter_name, msgs, chunk, options.cache_salt)
@@ -975,7 +971,7 @@ async def _cancel_pending(tasks: list[asyncio.Task]) -> None:
 
 
 def _flatten_parts(parts: list[Any]) -> str:
-    """Content parts as one string, joined with blank lines: text as it is, JSON as compact
+    """Content parts as one string, joined with blank lines: text as it is, JSON as single-line
     JSON (the rule an object `state` follows on the systemone route). Image parts are
     rejected, as `box` questions are on the systemone route."""
     texts: list[str] = []
@@ -1229,15 +1225,15 @@ def _route_exists(app: FastAPI, path: str) -> bool:
 
 
 class DecisionPlugin:
-    """`vllm.endpoint_plugins` entry point (see module docstring). Loaded only when
-    `granite_switch_decision` is in `VLLM_PLUGINS`; see this repo's README and Dockerfile."""
+    """`vllm.endpoint_plugins` entry point. Loaded only when `granite_switch_decision` is in
+    `VLLM_PLUGINS`; see this repo's README and Dockerfile."""
 
     name = "granite_switch_decision"
     required_tasks: tuple[str, ...] | None = ("generate",)
 
     def attach_router(self, app: FastAPI) -> None:
-        # vLLM also ships these routes. Whichever registers first would silently shadow
-        # the other, with different wire details, so refuse to start.
+        # Newer vLLM also ships these routes. Whichever registers first would silently shadow
+        # the other (the wire details differ), so refuse to start.
         taken = sorted(path for path in _ROUTE_PATHS if _route_exists(app, path))
         if taken:
             raise RuntimeError(

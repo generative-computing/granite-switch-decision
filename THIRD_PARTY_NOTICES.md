@@ -1,6 +1,7 @@
 # Third-party notices
 
-This project is Apache-2.0. It includes the following third-party material, used under the
+This project is Apache-2.0, except `src/granite_switch_decision/plugin.py` and `tests/test_plugin.py`,
+which are Apache-2.0 AND MIT because they adapt the MIT code below. It includes the following third-party material, used under the
 licence shown.
 
 ## typesafe-ai/system-one-adapter-python

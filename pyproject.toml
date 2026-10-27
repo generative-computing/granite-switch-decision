@@ -12,10 +12,8 @@ license = "Apache-2.0 AND MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 # granite-switch 0.1.1 requires Python 3.11-3.13.
 requires-python = ">=3.11"
-# fastapi/pydantic/starlette are already runtime dependencies of vllm (which the
-# container this ships in always has installed) -- not re-declared here on purpose,
-# to use whatever versions the vLLM image already pins rather than risking a resolver
-# conflict against them.
+# fastapi, pydantic and starlette are already vLLM runtime dependencies, so they are not
+# declared here. That avoids a resolver conflict with the versions the vLLM image pins.
 dependencies = []
 
 [project.optional-dependencies]

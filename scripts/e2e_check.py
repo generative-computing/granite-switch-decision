@@ -2,11 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """End-to-end check for a live granite-switch-decision server.
 
-Runs the full wire-format battery against any deployment of this plugin
-(local, container or remote), using only the Python standard library, so it
-runs anywhere Python 3 runs. Deployment is out of scope by design: whatever
-brings the server up (a local container, a cluster job, anything else) only
-needs to hand this script the server's base URL.
+Runs the wire-format checks against any deployment of this plugin, using only the
+standard library. It needs only the server's base URL, however the server was started.
 
   python3 scripts/e2e_check.py --base-url http://localhost:8000
 
@@ -599,7 +596,7 @@ def check_prefix_cache(client: Client, model: str, system_prompt: bool) -> Check
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base-url", required=True, help="server base URL, e.g. http://host:8000")
     parser.add_argument("--model", default=None, help="model name (default: first /v1/models entry)")
     parser.add_argument("--tolerance", type=float, default=0.05, help="parity tolerance on probabilities")

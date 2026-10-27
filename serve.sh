@@ -21,7 +21,7 @@ esac
 TP=${TENSOR_PARALLEL_SIZE:-$(python3 -c "import torch; print(max(torch.cuda.device_count(), 1))")}
 export DECISION_ADAPTER_NAME=${DECISION_ADAPTER_NAME:-decision}
 # --dtype bfloat16: composed checkpoints carry torch_dtype null (granite-switch#126).
-# flash_attn_version=2: avoids the FA3 schedule bug (granite-switch#139, still open).
+# flash_attn_version=2: avoids the FA3 schedule bug (granite-switch#139).
 # --max-logprobs 256: lets chat clients that read labels by top-K ask for more than 20.
 # --enable-prompt-tokens-details: reports prefix-cache hits in usage.input_tokens_details.
 # No global temperature override: the plugin sends temperature 0 on every decision
