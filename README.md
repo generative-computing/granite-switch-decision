@@ -23,8 +23,7 @@ callers do not need a prompt format, an invocation marker or a label scheme.
 With the public Granite Switch checkpoints, results are comparable with those on their model cards.
 
 You can run it as a container or add it to a vLLM install you already have. Start with
-[Quick start](#quick-start). What has and has not been tested is in
-[docs/STATUS.md](docs/STATUS.md), and how to run the tests is in [docs/TESTING.md](docs/TESTING.md).
+[Quick start](#quick-start). To check a deployment or run the tests, see [Testing](#testing).
 
 ## Quick start
 
@@ -167,7 +166,7 @@ have not run it against a live server, so after enabling it, confirm that an una
 
 If the server also handles chat, set `DECISION_MAX_CONCURRENT_REQUESTS` (8 to 32 is a sensible
 range). It is off by default, and without it a burst of decisions slowed chat p50 from 235 ms to
-1,088 ms in our load test (see [docs/STATUS.md](docs/STATUS.md)).
+1,088 ms in our load test.
 
 ## Speech input (optional)
 
@@ -308,19 +307,16 @@ Use it with vLLM 0.30. A vLLM that already has those routes makes the plugin sto
 quietly choosing one, so remove `granite_switch_decision` from `VLLM_PLUGINS` there. The upstream
 endpoints differ in some wire details: this plugin follows jev's format and OpenAI's schema as published.
 
-## How well tested is this?
+## Testing
 
-The pip install has had the most live testing, on vLLM 0.30.0 with H100 GPUs (the 8b on one, the 30b on
-two). [docs/STATUS.md](docs/STATUS.md) lists what was run and what was not.
-
-## Development
+The unit and spec tests run in CI, with no GPU. The scripts in `scripts/` check a running server from
+outside; they take `--base-url` and use only the standard library unless noted. We have run them on vLLM
+0.30.0 with H100 GPUs, serving the 8b and the 30b, mostly on the pip install. Serving the published
+images with `docker run` on amd64 hasn't been tried yet.
 
 ```bash
 pip install -e ".[dev]" && pytest      # unit and spec tests, no GPU
 ```
-
-With a server running, the scripts in `scripts/` check it from outside. All take `--base-url` and use
-only the standard library unless noted.
 
 | Script | What it checks |
 |---|---|

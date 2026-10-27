@@ -1,7 +1,6 @@
 # Testing
 
-Results of each check are in [STATUS.md](STATUS.md). This page says what each test
-covers and how to run it.
+This page says what each test covers and how to run it.
 
 ## Automated (CI, every push and pull request)
 
@@ -22,8 +21,7 @@ environment and runs the same suite against the installed package, and runs
 **What CI deliberately does not cover:** anything needing a GPU, a checkpoint or a
 live server. Those run by hand (the tokenizer test, the live-server batteries and the load
 probes below) because a CI runner cannot reproduce the model deployments they need.
-The commands are in the two Manual sections that follow, and results are recorded in
-[STATUS.md](STATUS.md). Locally, `pre-commit run --all-files` (after
+The commands are in the two Manual sections that follow. Locally, `pre-commit run --all-files` (after
 `pre-commit install`) runs the same lint, header, DCO and secret checks the CI runs;
 it needs `gitleaks` on `PATH` for the last of those.
 
