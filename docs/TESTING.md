@@ -190,13 +190,7 @@ licence. TypeSafe's own `openapi.json` carries no licence and is not used.
 
 ## Not in this repository
 
-`scripts/accuracy_check.py` is a small public version of the accuracy comparison (BoolQ
-only). The larger comparison on labelled public datasets (BoolQ, SST-5, Banking77): the
-`/v1/decisions` route against the same prompt sent over `/v1/chat/completions`, against
-the layout with the system prompt, and FlashAttention 2 against 3. That harness and its
-results are not published here; STATUS.md says what was compared. The Decision Index
-reproduction (kit, suite build, runs and scores) likewise lives outside this repository.
-
-The Decision Index runs described in STATUS.md use the public reproduction kit
-(`apolinario/decision-index`, MIT) driven against `/v1/systemone`; see the Decision Index
-section above for how to run it yourself.
+`scripts/accuracy_check.py` is a small public version of a larger accuracy comparison on labelled
+public datasets, which is not published here. The Decision Index reproduction (kit, suite build, runs and
+scores) likewise lives outside this repository. To run the public kit yourself against `/v1/systemone`,
+see the Decision Index section above.

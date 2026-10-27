@@ -311,8 +311,7 @@ endpoints differ in some wire details: this plugin follows jev's format and Open
 ## How well tested is this?
 
 The pip install has had the most live testing, on vLLM 0.30.0 with H100 GPUs (the 8b on one, the 30b on
-two). Earlier container images were served on H100 and GB10 GPUs. [docs/STATUS.md](docs/STATUS.md) lists
-exactly what was run.
+two). [docs/STATUS.md](docs/STATUS.md) lists what was run and what was not.
 
 ## Development
 
