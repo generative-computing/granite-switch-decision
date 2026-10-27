@@ -39,7 +39,7 @@ works on both. There are two variants of each release:
 | Tag | What it is |
 |---|---|
 | `latest`, `0.2.0` | Decisions and chat. Use this unless you need speech. |
-| `latest-asr`, `0.2.0-asr` | The same, plus the speech model built in, so `/v1/chat/completions` accepts spoken input (see [Speech input](#speech-input-optional)). About 1 GB larger. |
+| `latest-asr`, `0.2.0-asr` | The same, plus the speech model ([`ibm-granite/granite-speech-5.0-470m-turboctc`](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc)) built in, so `/v1/chat/completions` accepts spoken input (see [Speech input](#speech-input-optional)). About 1 GB larger. |
 
 `latest` and `latest-asr` always point at the newest release of their variant; the version tags stay
 fixed, so use one of those when you want a repeatable deployment. The pull is about 9 GB and the image takes
