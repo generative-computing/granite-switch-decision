@@ -60,8 +60,9 @@ setting for shared memory, and it matters most when you run with tensor parallel
 
 The image is built `FROM vllm/vllm-openai:v0.30.0` (Docker Hub), and adds `granite-switch[audio]==0.1.1`
 (the standard Switch plugin), `transformers==5.17.0` and this plugin. Both plugins are enabled for you. It
-has no weights in it. It reads the checkpoint from `/repository` (override with
-`MODEL_DIR`), so the same image serves the 8b and the 30b. We tested the 30b on two 80 GB GPUs; the
+has no Granite Switch weights in it: it reads the checkpoint from `/repository` (override with
+`MODEL_DIR`), so the same image serves the 8b and the 30b. The one exception is the `-asr` image, which
+also carries the speech model. We tested the 30b on two 80 GB GPUs; the
 container uses every GPU it can see unless you set `TENSOR_PARALLEL_SIZE`.
 
 ### Existing vLLM environment
