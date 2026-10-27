@@ -28,9 +28,8 @@ jobs:
       - name: pytest
         run: pytest -v --tb=short
 
-  # Build the artefact that ships and test THAT, not the checkout: install the
-  # wheel (src/ layout, so the checkout never shadows it) and run the same
-  # suite against the installed package.
+  # Build the artefact that ships and test that, not the checkout. The src/ layout
+  # means the checkout cannot shadow the installed wheel.
   build-and-install:
     runs-on: ubuntu-latest
     steps:

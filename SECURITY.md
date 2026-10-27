@@ -19,7 +19,8 @@ server alongside `/v1/chat/completions`. When deploying it:
   `--api-key`, which covers these routes too, whenever the server is reachable by
   anyone you do not fully trust
 - **Model access**: restrict who can read the checkpoint and log in to the serving machine
-- **Caller text is untrusted input**: the plugin escapes it against prompt injection,
-  but a decision adapter's probabilities are a prior, not an authorisation decision
+- **Caller text is untrusted input**: the plugin escapes special tokens and the invocation
+  marker, but the text can still steer the model, and a decision adapter's probabilities are a
+  prior, not an authorization decision
 - **Dependencies**: keep vLLM and the surrounding stack updated to receive security
   patches

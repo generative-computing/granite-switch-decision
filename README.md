@@ -9,13 +9,12 @@ that already serves `/v1/chat/completions`.
 Serving a Switch model takes two vLLM plugins. The standard `granite-switch` plugin
 (`register_granite_switch`) registers the model, and this one (`granite_switch_decision`) adds the
 decision endpoints on top. The container image has both, and the pip install below sets up both. This
-project exists to make the decision endpoints usable now, while we work with the vLLM project on
-integrating them (see [Upstream status](#upstream-status)).
+project makes the decision endpoints usable in the meantime (see [Upstream status](#upstream-status)).
 
 - `POST /v1/decisions` follows [OpenAI's Decisions API](https://developers.openai.com/api/docs/guides/decisions)
   for text input, and the official OpenAI SDKs work once you change `base_url`. A few parts of the API aren't
   supported, and those requests get a clear error ([details](#what-v1decisions-doesnt-support)).
-- `POST /v1/systemone` follows [jev's system-one API](https://docs.typesafe.ai/api).
+- `POST /v1/systemone` follows TypeSafe's [jev system-one API](https://docs.typesafe.ai/api).
 
 Each question is answered with one engine read of the adapter's single-token option labels, so
 callers do not need a prompt format, an invocation marker or a label scheme.
@@ -66,9 +65,8 @@ container uses every GPU it can see unless you set `TENSOR_PARALLEL_SIZE`.
 
 ### Existing vLLM environment
 
-You need Python 3.11 or later and PyTorch 2.11 or later (CUDA 13 builds are tested). **Use vLLM
-0.30.0**: it is the version the live tests ran on. granite-switch 0.1.1 accepts `vllm>=0.26,<0.31`,
-and `v0.1.0` was also served on 0.26 to 0.29, but nothing since has been checked there.
+You need Python 3.11 to 3.13 and PyTorch 2.11 or later (CUDA 13 builds are tested). **Use vLLM
+0.30.0**: it is the version the live tests ran on. granite-switch 0.1.1 accepts `vllm>=0.26,<0.31`.
 
 ```bash
 pip install "granite-switch[vllm]==0.1.1" "transformers>=5.16"
@@ -76,7 +74,8 @@ pip install "git+https://github.com/generative-computing/granite-switch-decision
 export VLLM_PLUGINS=register_granite_switch,granite_switch_decision
 export DECISION_INVOCATION_MARKER="### DECISION"
 vllm serve ibm-granite/granite-switch-4.1-8b --served-model-name granite-switch \
-    --dtype bfloat16 --attention-config.flash_attn_version=2 --enable-prompt-tokens-details
+    --dtype bfloat16 --attention-config.flash_attn_version=2 --enable-prompt-tokens-details \
+    --hf-overrides '{"asr_enabled": false}'
 ```
 
 List both plugins in `VLLM_PLUGINS`. vLLM loads endpoint plugins only when they are named, and once
@@ -132,7 +131,7 @@ are.
 
 - **`cache_salt`** keeps a request's prefix cache separate from everyone else's. The cache is shared, so a fast
   response (or a `cached_tokens` count) can show that someone has already sent the same prompt. If you serve several
-  tenants, have your gateway set a long random `cache_salt` for each. It's a privacy measure, not authentication.
+  tenants, have your gateway set a long random `cache_salt` for each. It separates caches; it does not authenticate callers.
   `/v1/decisions` accepts it too.
 - **`chat_template_kwargs`** may only be `{"enable_thinking": false}`. The server always chooses the adapter.
 - **`joint`, `images`, `audio`, `videos`, `priority`** are accepted at their defaults. This model reads text, one
@@ -156,7 +155,8 @@ The server listens on `0.0.0.0` and, as shipped, asks for no credentials on any 
 gateway that authenticates callers, or turn on vLLM's `--api-key`, which `serve.sh` passes through:
 
 ```bash
-docker run -d --gpus all --ipc=host -p 8000:8000 -v … granite-switch-decision --api-key "$KEY"
+docker run -d --gpus all --ipc=host -p 8000:8000 -v /srv/models/granite-switch-4.1-8b:/repository:ro \
+    ghcr.io/generative-computing/granite-switch-decision:0.2.0 --api-key "$KEY"
 ```
 
 In vLLM 0.30.0 that key check covers every `/v1` route, including `/v1/decisions` and
@@ -165,8 +165,7 @@ have not run it against a live server, so after enabling it, confirm that an una
 `/v1/decisions` returns 401.
 
 If the server also handles chat, set `DECISION_MAX_CONCURRENT_REQUESTS` (8 to 32 is a sensible
-range). It is off by default, and without it a burst of decisions slowed chat p50 from 235 ms to
-1,088 ms in our load test.
+range). It is off by default, and without it a burst of decisions can queue ahead of chat.
 
 ## Speech input (optional)
 
@@ -181,13 +180,12 @@ speech model
 about 1 GB) has to be available. Any one of these works:
 
 - Use an image with the model built in: the `-asr` tag (for example `latest-asr`), or build it yourself:
-  `docker build --build-arg WITH_ASR=1 -t granite-switch-decision:asr .` This is why the `-asr` variant
-  exists: the images run with the Hub offline, so the speech model has to be inside.
+  `docker build --build-arg WITH_ASR=1 -t granite-switch-decision:asr .`
 - Mount a Hub cache that holds the model and set `HF_HUB_CACHE` to that directory.
 - Set `HF_HUB_OFFLINE=0` so the model downloads at startup.
 
-On startup `serve.sh` checks for the speech model and for the audio libraries (`av`, `scipy`,
-`soundfile`, `soxr`), and stops with a message that names whatever is missing. The images already
+With `DECISION_SPEECH_INPUT=1`, `serve.sh` checks at startup for the speech model and for the audio libraries
+(`av`, `scipy`, `soundfile`, `soxr`), and stops with a message that names whatever is missing. The images already
 include the libraries. If you run the plugin in your own environment, install `vllm[audio]`. Without
 it the server starts and passes `/health`, then answers every audio request with HTTP 500 "Please
 install vllm[audio]".
@@ -209,8 +207,8 @@ name is passed on to `vllm serve`.
 | `MAX_MODEL_LEN` | `32768` | Longest prompt plus output. |
 | `GPU_MEMORY_UTILIZATION` | `0.90` | Share of GPU memory vLLM may use. |
 | `TENSOR_PARALLEL_SIZE` | every visible GPU | GPUs to split the model across. |
-| `DECISION_ADAPTER_NAME` | the only adapter, else `decision` | Which adapter answers. Checked against the checkpoint at startup; an unknown name stops the server. |
-| `DECISION_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. It is required: with a wrong marker the chat template activates the adapter in the wrong place without raising an error. |
+| `DECISION_ADAPTER_NAME` | `decision` (the plugin alone uses the checkpoint's only adapter, else `decision`) | Which adapter answers. Checked against the checkpoint at startup; an unknown name stops the server. |
+| `DECISION_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. It is required. Startup checks that a probe prompt activates the adapter exactly once and stops if not, but it cannot tell a working marker from the one the adapter was trained on. |
 | `DECISION_SPEECH_INPUT` | `0` | `1` keeps speech input; see [Speech input](#speech-input-optional). |
 | `DECISION_MAX_CONCURRENT_REQUESTS` | `0` (no cap) | Decision requests allowed in flight across both routes. Past the cap a request gets 503 at once, so a burst cannot queue ahead of chat. |
 | `DECISION_RENDERER` | `granite_switch_decision.renderer:render` | A `module:function` that builds the prompt and label ids, for an adapter trained differently. |
@@ -232,7 +230,7 @@ model repository moves. The checkpoint is never a build argument: you mount it w
 | Flag | Why |
 |---|---|
 | `--dtype bfloat16` | Composed checkpoints carry `torch_dtype: null` ([granite-switch#126](https://github.com/generative-computing/granite-switch/issues/126)), and vLLM would otherwise load float32. |
-| `--attention-config.flash_attn_version=2` | Avoids an FA3 schedule bug with CUDA graphs and prefix caching ([granite-switch#139](https://github.com/generative-computing/granite-switch/issues/139), open). With granite-switch 0.1.1 we measured FA3 the same as FA2 for answers and speed, so this is a precaution. |
+| `--attention-config.flash_attn_version=2` | Avoids an FA3 schedule bug with CUDA graphs and prefix caching ([granite-switch#139](https://github.com/generative-computing/granite-switch/issues/139), open). |
 | `--enable-prompt-tokens-details` | vLLM reports each request's prefix-cache hits, and `/v1/decisions` returns them as `usage.input_tokens_details`. Without the flag both counts are 0. |
 | `--max-logprobs 256` | For chat clients that read labels by top-K logprobs (vLLM's default cap is 20). The plugin does not need it. |
 | `--enable-auto-tool-choice --tool-call-parser granite4` | Tool calling on the shared chat route. |
@@ -280,7 +278,7 @@ same prompt, served from the prefix cache.
 - **Repeat requests.** The same request can return slightly different probabilities, depending on how it is
   batched and whether it hits the prefix cache, so a near-tie can flip. A different GPU or tensor-parallel size can
   differ a little more. vLLM's `VLLM_BATCH_INVARIANT=1` aims to make repeats exact; we haven't tried it here.
-- **Not provided.** Authentication (use vLLM's `--api-key`), rate limiting and `refusal` answers.
+- **Not provided.** Authentication (use vLLM's `--api-key`), per-client rate limiting and `refusal` answers.
 
 ### What /v1/decisions doesn't support
 
@@ -296,14 +294,14 @@ The route never returns `refusal` answers, and `/v1/systemone` likewise refuses 
 
 ## Upstream status
 
-This project is temporary. vLLM is adding its own `/v1/systemone`
-([#59299](https://github.com/vllm-project/vllm/pull/59299)) and `/v1/decisions`
-([#60465](https://github.com/vllm-project/vllm/pull/60465)). Both are on vLLM's `main`, after 0.30.0. We
-intend to work with the vLLM project on bringing base Granite Switch support
+This project is temporary. vLLM has added its own `/v1/systemone`
+([#59299](https://github.com/vllm-project/vllm/pull/59299), in 0.32.0) and `/v1/decisions`
+([#60465](https://github.com/vllm-project/vllm/pull/60465), merged to `main`). We intend to work with the
+vLLM project on bringing base Granite Switch support
 ([#60232](https://github.com/vllm-project/vllm/pull/60232)) and decision support into vLLM itself or a
 common plugin, and this package goes away once that is done.
 
-Use it with vLLM 0.30. A vLLM that already has those routes makes the plugin stop at startup, rather than
+Use it with vLLM 0.30; later releases are untested. A vLLM that already has those routes makes the plugin stop at startup, rather than
 quietly choosing one, so remove `granite_switch_decision` from `VLLM_PLUGINS` there. The upstream
 endpoints differ in some wire details: this plugin follows jev's format and OpenAI's schema as published.
 
@@ -311,8 +309,8 @@ endpoints differ in some wire details: this plugin follows jev's format and Open
 
 The unit and spec tests run in CI, with no GPU. The scripts in `scripts/` check a running server from
 outside; they take `--base-url` and use only the standard library unless noted. We have run them on vLLM
-0.30.0 with H100 GPUs, serving the 8b and the 30b, mostly on the pip install. Serving the published
-images with `docker run` on amd64 hasn't been tried yet.
+0.30.0 with H100 GPUs, serving the 8b and the 30b, mostly on the pip install. We have not run the published
+images with `docker run` on amd64.
 
 ```bash
 pip install -e ".[dev]" && pytest      # unit and spec tests, no GPU

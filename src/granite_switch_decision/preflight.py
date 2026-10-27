@@ -38,7 +38,8 @@ def _offline(env: Mapping[str, str]) -> bool:
 
 
 def hub_cache_dir(env: Mapping[str, str]) -> Path:
-    """Where huggingface_hub looks for cached models, by its own precedence."""
+    """Where huggingface_hub looks for cached models: HF_HUB_CACHE, HUGGINGFACE_HUB_CACHE, then HF_HOME
+    (default ~/.cache/huggingface). XDG_CACHE_HOME is not consulted."""
     for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
         if env.get(name):
             return Path(env[name])

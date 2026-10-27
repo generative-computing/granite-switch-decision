@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Robustness checks for a live granite-switch-decision server: limits, escaping,
-cancellation, error handling, and optional load. Standard library only.
+"""Robustness checks for a live granite-switch-decision server (standard library only).
+
+Limits, escaping, cancellation, error handling and, optionally, load.
 
   python3 scripts/probe_check.py --base-url http://localhost:8000
   python3 scripts/probe_check.py --base-url http://localhost:8000 --load 30
@@ -18,8 +19,8 @@ Exit code 0 means every check passed. Checks:
   cancellation      a client that disconnects mid-request leaves the engine idle
   concurrency       with --max-concurrent N (the server's
                     DECISION_MAX_CONCURRENT_REQUESTS), a burst gets 200s and 503s
-  load              with --load SECONDS, throughput and latency at 1, 8 and 32
-                    clients, and chat latency alongside (reported, not asserted)
+  load              with --load SECONDS, throughput and latency at 0 (chat
+                    only), 1, 8 and 32 clients, with chat latency alongside (reported, not asserted)
 
 Run it on a server with no other traffic: cancellation and load read vLLM's /metrics.
 """
@@ -275,7 +276,7 @@ def run_load(p: Probe, seconds: float) -> Result:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--model", default="granite-switch")
     parser.add_argument("--timeout", type=float, default=300.0)

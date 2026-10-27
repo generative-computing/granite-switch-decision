@@ -18,7 +18,7 @@ ARG GRANITE_SWITCH_VERSION=0.1.1
 ARG WITH_ASR=0
 
 # granite-switch is pinned to a PyPI release so the image does not drift with upstream;
-# transformers 5.17 is the version it supports. The [audio] extra (av, scipy, soundfile,
+# transformers is pinned to 5.17.0. The [audio] extra (av, scipy, soundfile,
 # soxr) is in every build: without it audio requests fail with HTTP 500 while /health and
 # decisions look fine. The constraint file keeps the base image's vLLM, torch and
 # torchcodec as they are.
@@ -30,8 +30,8 @@ RUN python3 -m pip list --format=freeze | grep -i -E "^(vllm|torch|torchaudio|to
 
 # The speech model the checkpoint's config names, baked in as a Hub cache at the tested
 # commit (without the repo's unused .py files). The server runs with the Hub offline, so a
-# missing file fails startup instead of fetching something else. A download by commit
-# writes no refs/main, which the offline lookup for "main" reads, so it is written here.
+# missing file fails startup instead of fetching something else. Downloading by commit
+# does not create refs/main, which the offline lookup needs, so the next lines write it.
 ARG ASR_MODEL=ibm-granite/granite-speech-5.0-470m-turboctc
 ARG ASR_REVISION=1dd23f46f6d4e6eae2531982ba2e33220086dd97
 RUN if [ "$WITH_ASR" = "1" ]; then \

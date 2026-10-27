@@ -53,7 +53,7 @@ def check_settings() -> None:
 
 def text_of(x: object) -> str:
     """`state`/a description may be a dict/list (jev allows `string | object | array`
-    for both); render JSON compactly, pass strings through, "" for None."""
+    for both); render JSON on one line, pass strings through, "" for None."""
     if isinstance(x, (dict, list)):
         return json.dumps(x, ensure_ascii=False)
     return "" if x is None else str(x)

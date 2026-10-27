@@ -11,9 +11,8 @@
    pip install -e ".[dev]"
    ```
 
-   The unit and spec tests need no GPU. Two of them fetch pinned third-party material
-   on first run (OpenAI's OpenAPI schema; TypeSafe's wire models come from the
-   `typesafe-sdk` dev dependency) and skip with a message when offline. See
+   The unit and spec tests need no GPU. `tests/test_openai_spec.py` downloads OpenAI's
+   OpenAPI schema on first run and skips with a message when offline. See
    [docs/TESTING.md](docs/TESTING.md) for what each test covers and how to run the
    live-server checks.
 
@@ -24,6 +23,7 @@
    ruff format --check src tests scripts ci examples
    ruff check src tests scripts ci examples
    ty check src
+   python3 ci/check_headers.py
    pytest
    ```
 
@@ -57,8 +57,8 @@ git commit --amend -s --no-edit
 
 To sign off several commits, use `git rebase --signoff <base>` and force-push.
 
-The repo's pre-commit config also runs a local DCO check at `commit-msg` time, so
-unsigned commits fail before they are pushed.
+The repo's pre-commit config has a local DCO check that runs at `commit-msg` time. Install it with
+`pre-commit install --hook-type commit-msg`, and unsigned commits then fail before they are pushed.
 
 ## Contribution Guidelines
 
@@ -77,4 +77,4 @@ participating.
 
 ## Questions
 
-Open an issue or start a discussion.
+Open an issue.
