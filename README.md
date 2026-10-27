@@ -1,8 +1,16 @@
 # granite-switch-decision
 
-Decision APIs for [Granite Switch](https://github.com/generative-computing/granite-switch), as a
-vLLM plugin. Ask a question about some text and get back probabilities, from the same server and
-GPU cache that already serves `/v1/chat/completions`.
+Decision APIs for [Granite Switch](https://github.com/generative-computing/granite-switch)
+([`granite-switch-4.1-8b`](https://huggingface.co/ibm-granite/granite-switch-4.1-8b) and
+[`-30b`](https://huggingface.co/ibm-granite/granite-switch-4.1-30b) on Hugging Face), as a vLLM
+plugin. Ask a question about some text and get back probabilities, from the same server and GPU cache
+that already serves `/v1/chat/completions`.
+
+Serving a Switch model takes two vLLM plugins. The standard `granite-switch` plugin
+(`register_granite_switch`) registers the model, and this one (`granite_switch_decision`) adds the
+decision endpoints on top. The container image has both, and the pip install below sets up both. This
+project exists to make the decision endpoints usable now, while we work with the vLLM project on
+integrating them (see [Upstream status](#upstream-status)).
 
 - `POST /v1/decisions` follows [OpenAI's Decisions API](https://developers.openai.com/api/docs/guides/decisions)
   for text input, and the official OpenAI SDKs work once you change `base_url`. A few parts of the API aren't
@@ -24,10 +32,18 @@ You need a Linux machine with an NVIDIA GPU. The 8b checkpoint fits on one 80 GB
 
 ### Container
 
-Release images are published to GitHub Container Registry as
+Images are published to GitHub Container Registry as
 `ghcr.io/generative-computing/granite-switch-decision` for linux/amd64 and linux/arm64, so one tag
-works on both. `latest` is the newest release, and each release is also tagged with its version. The
-pull is about 9 GB and the image takes about 30 GB on disk (amd64 figures). You also need Docker and the NVIDIA container toolkit.
+works on both. There are two variants of each release:
+
+| Tag | What it is |
+|---|---|
+| `latest`, `0.2.0` | Decisions and chat. Use this unless you need speech. |
+| `latest-asr`, `0.2.0-asr` | The same, plus the speech model built in, so `/v1/chat/completions` accepts spoken input (see [Speech input](#speech-input-optional)). About 1 GB larger. |
+
+`latest` and `latest-asr` always point at the newest release of their variant; the version tags stay
+fixed, so use one of those when you want a repeatable deployment. The pull is about 9 GB and the image takes
+about 30 GB on disk (amd64 figures). You also need Docker and the NVIDIA container toolkit.
 
 ```bash
 # Download the checkpoint (public, not gated, about 18 GB)
@@ -42,12 +58,9 @@ docker run -d --name gss --gpus all --ipc=host -p 8000:8000 \
 Loading takes a few minutes; follow it with `docker logs -f gss`. `--ipc=host` is vLLM's usual
 setting for shared memory, and it matters most when you run with tensor parallelism.
 
-The ghcr package is currently private, so `docker pull` needs `docker login ghcr.io` with an account
-that has access. Until it is public, build the image yourself: clone this repository at a release tag
-and run `docker build -t granite-switch-decision .`.
-
-The image is `vllm/vllm-openai:v0.30.0` plus `granite-switch[audio]==0.1.1`, `transformers==5.17.0` and
-this plugin. It has no weights in it. It reads the checkpoint from `/repository` (override with
+The image is built `FROM vllm/vllm-openai:v0.30.0` (Docker Hub), and adds `granite-switch[audio]==0.1.1`
+(the standard Switch plugin), `transformers==5.17.0` and this plugin. Both plugins are enabled for you. It
+has no weights in it. It reads the checkpoint from `/repository` (override with
 `MODEL_DIR`), so the same image serves the 8b and the 30b. We tested the 30b on two 80 GB GPUs; the
 container uses every GPU it can see unless you set `TENSOR_PARALLEL_SIZE`.
 
@@ -77,8 +90,8 @@ Create an endpoint for the model repository and choose a custom container. Huggi
 says the model weights are stored under `/repository`, which is where this image looks. The image
 serves on port `8000` and answers `/health`, so those are the values for the endpoint's container port
 and health route. The guide lists public images and private ones on Docker Hub, AWS ECR, Azure ACR
-and Google GCR; GitHub Container Registry is not in that list, so the package has to be public.
-**We have not tried this on Inference Endpoints yet.**
+and Google GCR. GitHub Container Registry is not in that list, but the image is public, so it needs no
+registry credentials.
 
 ### Check that it works
 
@@ -122,8 +135,9 @@ are.
   tenants, have your gateway set a long random `cache_salt` for each. It's a privacy measure, not authentication.
   `/v1/decisions` accepts it too.
 - **`chat_template_kwargs`** may only be `{"enable_thinking": false}`. The server always chooses the adapter.
-- **`joint`, `images`, `audio`, `videos`, `priority`, `request_id`** are accepted at their defaults. This model reads
-  text, one question at a time, so other values get a 422.
+- **`joint`, `images`, `audio`, `videos`, `priority`** are accepted at their defaults. This model reads text, one
+  question at a time, so other values get a 422.
+- **`request_id`** is accepted and ignored.
 - **`model`** is required here, though vLLM makes it optional.
 
 Each question in a `/v1/systemone` response also carries `diagnostics`: `label_mass`, how much probability the model
@@ -132,6 +146,11 @@ response schema doesn't allow extra fields, so `/v1/decisions` has none. `confid
 comparable with vLLM's.
 
 ## Secure it before you expose it
+
+Check the security of any image you run, including this one and the `vllm/vllm-openai` image it is built
+on. For the most control, build your own image from this repository's `Dockerfile` (change the base image
+or pinned versions as you need), or install the plugins straight into a vLLM environment you already
+maintain, as in [Existing vLLM environment](#existing-vllm-environment).
 
 The server listens on `0.0.0.0` and, as shipped, asks for no credentials on any route. Put it behind a
 gateway that authenticates callers, or turn on vLLM's `--api-key`, which `serve.sh` passes through:
@@ -161,9 +180,9 @@ speech model
 ([`ibm-granite/granite-speech-5.0-470m-turboctc`](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc),
 about 1 GB) has to be available. Any one of these works:
 
-- Use an image with the model built in: the `-asr` tag of a release (releases made with the current
-  workflow publish one), or build it yourself:
-  `docker build --build-arg WITH_ASR=1 -t granite-switch-decision:asr .`
+- Use an image with the model built in: the `-asr` tag (for example `latest-asr`), or build it yourself:
+  `docker build --build-arg WITH_ASR=1 -t granite-switch-decision:asr .` This is why the `-asr` variant
+  exists: the images run with the Hub offline, so the speech model has to be inside.
 - Mount a Hub cache that holds the model and set `HF_HUB_CACHE` to that directory.
 - Set `HF_HUB_OFFLINE=0` so the model downloads at startup.
 
@@ -277,45 +296,43 @@ The route never returns `refusal` answers, and `/v1/systemone` likewise refuses 
 
 ## Upstream status
 
-vLLM now has its own `/v1/systemone` ([#59299](https://github.com/vllm-project/vllm/pull/59299),
-merged 2026-10-08) and `/v1/decisions` ([#60465](https://github.com/vllm-project/vllm/pull/60465),
-merged 2026-10-13). Both are on `main` after 0.30.0, so the next vLLM release will carry them. This
-package is for vLLM 0.30, and for 0.26 to 0.29 (untested since `v0.1.0`), where those routes are
-absent. You can drop it once you move to a release that has them. The upstream endpoints differ in wire
-details: this plugin follows jev's format and OpenAI's schema as published.
+This project is temporary. vLLM is adding its own `/v1/systemone`
+([#59299](https://github.com/vllm-project/vllm/pull/59299)) and `/v1/decisions`
+([#60465](https://github.com/vllm-project/vllm/pull/60465)). Both are on vLLM's `main`, after 0.30.0. We
+intend to work with the vLLM project on bringing base Granite Switch support
+([#60232](https://github.com/vllm-project/vllm/pull/60232)) and decision support into vLLM itself or a
+common plugin, and this package goes away once that is done.
 
-The plugin refuses to start if either path is already registered, so on a vLLM that has the upstream
-endpoints it fails at startup and does not silently pick one. Remove `granite_switch_decision` from
-`VLLM_PLUGINS` there. vLLM 0.32 mounts its own `/v1/systemone` (newer versions add `/v1/decisions`).
-Neither knows Switch adapters, and granite-switch 0.1.1 does not support those versions yet.
-
-Still open upstream are native Granite Switch support
-([#60232](https://github.com/vllm-project/vllm/pull/60232)) and modular read strategies
-([RFC #59365](https://github.com/vllm-project/vllm/issues/59365)). If the RFC is accepted, the natural
-migration is a Granite Switch read strategy, and `renderer.render(tok, state, instructions, descs) ->
-(messages, label_ids)` is already close to what a strategy needs.
+Use it with vLLM 0.30. A vLLM that already has those routes makes the plugin stop at startup, rather than
+quietly choosing one, so remove `granite_switch_decision` from `VLLM_PLUGINS` there. The upstream
+endpoints differ in some wire details: this plugin follows jev's format and OpenAI's schema as published.
 
 ## How well tested is this?
 
-The pip path is what most of the live testing used. The container image is lightly tested: it builds
-for amd64 and arm64, with and without the speech model, and the packages and plugin entry points were checked
-inside it. The published `0.1.3` image (then named `granite-switch-systemone`) was served on H100 GPUs with only the checkpoint mounted and
-speech input off, the 8b on one GPU and the 30b on two with tensor parallelism, and the wire,
-robustness and accuracy checks passed. That was run under enroot and not with `docker run`. The arm64 image was also served with `docker run` on an NVIDIA GB10 (the 8b, default image). The arm64 `-asr` image was also served with `docker run` and passed the speech check; see
-[docs/STATUS.md](docs/STATUS.md) for exactly what was and was not run. If you run the image, treat the
-first start as a test and tell us what you find.
+The pip install has had the most live testing, on vLLM 0.30.0 with H100 GPUs (the 8b on one, the 30b on
+two). Earlier container images were served on H100 and GB10 GPUs. [docs/STATUS.md](docs/STATUS.md) lists
+exactly what was run.
 
 ## Development
 
 ```bash
-pip install -e ".[dev]" && pytest                              # unit and spec tests, no GPU
-python3 scripts/e2e_check.py --base-url http://localhost:8000   # live wire checks
-python3 scripts/probe_check.py --base-url http://localhost:8000 # live robustness checks
-python3 scripts/accuracy_check.py --base-url http://localhost:8000  # answers are still good (needs internet)
+pip install -e ".[dev]" && pytest      # unit and spec tests, no GPU
 ```
 
-[docs/TESTING.md](docs/TESTING.md) lists every test, what runs in CI, and what needs a tokenizer or a
-live server.
+With a server running, the scripts in `scripts/` check it from outside. All take `--base-url` and use
+only the standard library unless noted.
+
+| Script | What it checks |
+|---|---|
+| `e2e_check.py` | Wire formats on both routes, parity, input flattening, errors, usage, vLLM's request fields, prefix-cache sharing |
+| `probe_check.py` | Question and size limits, escaping, disconnects; `--max-concurrent` and `--load` add the limiter and a load run |
+| `accuracy_check.py` | Accuracy on BoolQ rows (needs internet); `--save` and `--compare` for before/after runs |
+| `speech_check.py` | Speech input on a server started with `DECISION_SPEECH_INPUT=1` |
+| `load_test.py` | Throughput and latency of `/v1/decisions` at 1 to 128 clients |
+| `longctx_check.py` | Long-context caps (needs the tokenizer and a 131k-context server) |
+
+[docs/TESTING.md](docs/TESTING.md) has every test, the commands and options, what runs in CI, and what
+needs a tokenizer or a live server.
 
 ## Licence
 
