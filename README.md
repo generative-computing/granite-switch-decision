@@ -90,7 +90,8 @@ says the model weights are stored under `/repository`, which is where this image
 serves on port `8000` and answers `/health`, so those are the values for the endpoint's container port
 and health route. The guide lists public images and private ones on Docker Hub, AWS ECR, Azure ACR
 and Google GCR. GitHub Container Registry is not in that list, but the image is public, so it needs no
-registry credentials.
+registry credentials. The platform has no persistent storage, so `CACHE_DIR` has nothing to survive
+a restart there; the [startup tuning](#fast-startup-optional) options still work.
 
 ### Check that it works
 
@@ -207,6 +208,10 @@ name is passed on to `vllm serve`.
 | `MAX_MODEL_LEN` | `32768` | Longest prompt plus output. |
 | `GPU_MEMORY_UTILIZATION` | `0.90` | Share of GPU memory vLLM may use. |
 | `TENSOR_PARALLEL_SIZE` | every visible GPU | GPUs to split the model across. |
+| `STARTUP_MODE` | `default` | `fast` compiles less and captures CUDA graphs only for small batches; `eager` skips compilation and graphs entirely. See [Fast startup](#fast-startup-optional). |
+| `CUDA_GRAPH_SIZES` | vLLM's own set | Comma-separated batch sizes to capture CUDA graphs for, e.g. `1,2,4,8,16,32`. Overrides `fast` mode's set. |
+| `QUANT` | `off` | `kv_fp8` stores the KV cache as fp8 (about half the memory); `fp8` additionally quantizes weights on load. Both change decision probabilities slightly; see [Fast startup](#fast-startup-optional). |
+| `CACHE_DIR` | `/cache` | If writable, vLLM's compile cache and Triton's kernels are kept under it, so mounting a volume there persists them across restarts. Unwritable or unmounted, both stay ephemeral. |
 | `DECISION_ADAPTER_NAME` | `decision` (the plugin alone uses the checkpoint's only adapter, else `decision`) | Which adapter answers. Checked against the checkpoint at startup; an unknown name stops the server. |
 | `DECISION_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. It is required. Startup checks that a probe prompt activates the adapter exactly once and stops if not, but it cannot tell a working marker from the one the adapter was trained on. |
 | `DECISION_SPEECH_INPUT` | `0` | `1` keeps speech input; see [Speech input](#speech-input-optional). |
@@ -243,6 +248,47 @@ On every decision request the plugin itself sets `temperature=0.0`, `max_complet
 `chat_template_kwargs={"adapter_name": <DECISION_ADAPTER_NAME>}`. Callers cannot change them. vLLM
 caps `logprob_token_ids` at 128 ids, so a `choice` with more options runs as several requests over the
 same prompt, served from the prefix cache.
+
+### Fast startup (optional)
+
+A vLLM boot spends noticeable time in `torch.compile` and CUDA-graph capture before the first token.
+Three environment variables trade that against steady-state performance, for demos or for
+scale-to-zero deployments where every wake pays the boot again:
+
+- `STARTUP_MODE=fast` passes `--optimization-level 1` (less compilation) and captures CUDA graphs
+  only for batch sizes 1-32. Batches larger than the largest captured size still run, without a
+  graph, so the effect of a too-small set is slower decode, never a failure.
+- `STARTUP_MODE=eager` passes `--enforce-eager`: no compilation and no graphs at all, the fastest
+  boot and the slowest serving. For a one-user demo the decode cost is usually irrelevant.
+- `CUDA_GRAPH_SIZES=1,2,4,8` trims the capture set on its own, with `STARTUP_MODE` left at
+  `default`.
+
+All three default off; an unset or empty value means today's behaviour, and a value that is not one
+of the listed ones stops the server at startup with the offending value in the log. The first log
+line after startup begins `startup:` and names the active mode, quantization, capture sizes and
+cache location, so a deployment's own configuration is visible in its logs.
+
+`CACHE_DIR` (default `/cache`) adds the other half: vLLM writes its `torch.compile` artifacts and
+Triton its compiled kernels under it when it is writable, so mounting a volume there
+
+```bash
+docker run -d --name gss --gpus all --ipc=host -p 8000:8000 \
+    -v /srv/models/granite-switch-4.1-8b:/repository:ro \
+    -v gss-cache:/cache \
+    ghcr.io/generative-computing/granite-switch-decision:0.2.0
+```
+
+keeps both across restarts, and a restart skips most of the compile cost. The caches are keyed on
+the vLLM version, the model, the configuration and the GPU, so they recompile silently after an
+upgrade and a volume can be shared only between identical deployments. Hugging Face Inference
+Endpoints has no persistent storage, so there the caches stay ephemeral whatever this is set to;
+the option is for self-hosted containers.
+
+`QUANT=kv_fp8` roughly halves KV-cache memory, which helps when a second engine shares the GPU;
+`QUANT=fp8` also quantizes the weights on load (roughly halving weight memory and load time).
+Both perturb the logits slightly, and a decision is a near-tie read at `temperature=0`, so a
+deployment serving decisions with either enabled is not bit-identical to one without; treat any
+published score as measured on unquantized serving.
 
 ## Behaviour and limits
 
