@@ -118,7 +118,7 @@ def test_startup_defaults_add_no_flags_and_log_the_banner(tmp_path):
     assert "--cudagraph-capture-sizes" not in argv
     assert "--kv-cache-dtype" not in argv
     assert "--quantization" not in argv
-    assert "startup: mode=default quant=off" in done.stdout
+    assert "startup: mode=default" in done.stdout
 
 
 def test_startup_mode_fast_compiles_less_and_trims_capture_sizes(tmp_path):
@@ -167,18 +167,25 @@ def test_bad_cuda_graph_sizes_are_refused(tmp_path, value):
     assert value in done.stderr
 
 
-@pytest.mark.parametrize("mode, flag", [("kv_fp8", "--kv-cache-dtype"), ("fp8", "--quantization")])
-def test_quant_modes_add_their_flag(tmp_path, mode, flag):
-    done, argv, _ = _run(tmp_path, {"QUANT": mode})
-    assert done.returncode == 0, done.stderr
-    assert argv[argv.index(flag) + 1] == "fp8"
+# Both quantization values were measured failing inside vLLM against the 8b checkpoint's aLoRA
+# adapters, so any value other than unset/off is refused at startup rather than failing later.
 
 
-def test_bad_quant_is_refused(tmp_path):
-    done, argv, _ = _run(tmp_path, {"QUANT": "int4"})
+@pytest.mark.parametrize("value", ["kv_fp8", "fp8", "int4"])
+def test_any_quant_value_is_refused_with_the_reason(tmp_path, value):
+    done, argv, _ = _run(tmp_path, {"QUANT": value})
     assert done.returncode == 2
     assert argv == []
-    assert "int4" in done.stderr
+    assert "not supported for granite-switch" in done.stderr
+    assert "aLoRA" in done.stderr
+
+
+@pytest.mark.parametrize("value", ["", "off"])
+def test_quant_empty_and_off_are_accepted(tmp_path, value):
+    done, argv, _ = _run(tmp_path, {"QUANT": value})
+    assert done.returncode == 0, done.stderr
+    assert "--quantization" not in argv
+    assert "--kv-cache-dtype" not in argv
 
 
 def test_writable_cache_dir_persists_compile_and_triton_caches(tmp_path):

@@ -210,7 +210,6 @@ name is passed on to `vllm serve`.
 | `TENSOR_PARALLEL_SIZE` | every visible GPU | GPUs to split the model across. |
 | `STARTUP_MODE` | `default` | `fast` compiles less and captures CUDA graphs only for small batches; `eager` skips compilation and graphs entirely. See [Fast startup](#fast-startup-optional). |
 | `CUDA_GRAPH_SIZES` | vLLM's own set | Comma-separated batch sizes to capture CUDA graphs for, e.g. `1,2,4,8,16,32`. Overrides `fast` mode's set. |
-| `QUANT` | `off` | `kv_fp8` stores the KV cache as fp8 (about half the memory); `fp8` additionally quantizes weights on load. Both change decision probabilities slightly; see [Fast startup](#fast-startup-optional). |
 | `CACHE_DIR` | `/cache` | If writable, vLLM's compile cache and Triton's kernels are kept under it, so mounting a volume there persists them across restarts. Unwritable or unmounted, both stay ephemeral. |
 | `DECISION_ADAPTER_NAME` | `decision` (the plugin alone uses the checkpoint's only adapter, else `decision`) | Which adapter answers. Checked against the checkpoint at startup; an unknown name stops the server. |
 | `DECISION_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. It is required. Startup checks that a probe prompt activates the adapter exactly once and stops if not, but it cannot tell a working marker from the one the adapter was trained on. |
@@ -265,8 +264,24 @@ scale-to-zero deployments where every wake pays the boot again:
 
 All three default off; an unset or empty value means today's behaviour, and a value that is not one
 of the listed ones stops the server at startup with the offending value in the log. The first log
-line after startup begins `startup:` and names the active mode, quantization, capture sizes and
-cache location, so a deployment's own configuration is visible in its logs.
+line after startup begins `startup:` and names the active mode, capture sizes and cache location, so
+a deployment's own configuration is visible in its logs.
+
+Measured on a DGX Spark (GB10, 121.6 GB unified memory) serving the 8b, time from container start to
+`/health` answering 200, each arm a fresh container with `MAX_MODEL_LEN=4096`,
+`--max-num-seqs 4` and `--max-num-batched-tokens 1024`:
+
+| Arm | To ready | Weight load | Compile | Graph capture |
+|---|---|---|---|---|
+| `STARTUP_MODE=eager` | **232 s** | 99 s | none | none |
+| `STARTUP_MODE=fast` | 255 s | 104 s | 16 s | 97 s |
+| `default` | 279 s | 122 s | 16 s | (vLLM's set) |
+
+Two conclusions, both specific to that hardware. Weight loading dominates the boot, so a warm page
+cache matters more than any flag here. And CUDA-graph capture is expensive on GB10 (97 s for six
+sizes), so `eager` is the fastest startup mode there, not `fast`. On H100-class hardware capture is
+far cheaper (published figures put a trimmed set near 7 s against 54 s for the default set), which is
+where `fast` earns its keep. Treat the table as a starting point to measure against, not a rule.
 
 `CACHE_DIR` (default `/cache`) adds the other half: vLLM writes its `torch.compile` artifacts and
 Triton its compiled kernels under it when it is writable, so mounting a volume there
@@ -284,11 +299,15 @@ upgrade and a volume can be shared only between identical deployments. Hugging F
 Endpoints has no persistent storage, so there the caches stay ephemeral whatever this is set to;
 the option is for self-hosted containers.
 
-`QUANT=kv_fp8` roughly halves KV-cache memory, which helps when a second engine shares the GPU;
-`QUANT=fp8` also quantizes the weights on load (roughly halving weight memory and load time).
-Both perturb the logits slightly, and a decision is a near-tie read at `temperature=0`, so a
-deployment serving decisions with either enabled is not bit-identical to one without; treat any
-published score as measured on unquantized serving.
+### Quantization doesn't work here
+
+vLLM's fp8 quantization cannot serve these checkpoints. `--quantization fp8` fails at load with
+`LoRA weight load: 168 parameter(s) absent from the checkpoint would be served UNINITIALIZED`, because
+the aLoRA adapters are not quantized and have no corresponding scale parameters, and
+`--kv-cache-dtype fp8` fails in `input_quant_fp8.forward_cuda` on `assert input.ndim == 2` in the
+switch forward path. Both were measured on a GB10 against the 8b. There is no `QUANT` option in this
+image for that reason; passing one stops the server at startup with the reason rather than failing
+later. For a smaller memory footprint, use a smaller checkpoint.
 
 ## Behaviour and limits
 

@@ -5,8 +5,8 @@
 #   MODEL_DIR               default /repository (HF Inference Endpoints' mount point)
 #   TENSOR_PARALLEL_SIZE    default: every visible GPU
 #   MAX_MODEL_LEN (32768), GPU_MEMORY_UTILIZATION (0.90), PORT (8000), SERVED_MODEL_NAME
-#   STARTUP_MODE (default), CUDA_GRAPH_SIZES, QUANT (off), CACHE_DIR (/cache): optional startup
-#                           tuning; see README, "Fast startup". All default to today's behaviour.
+#   STARTUP_MODE (default), CUDA_GRAPH_SIZES, CACHE_DIR (/cache): optional startup tuning; see
+#                           README, "Fast startup". All default to today's behaviour.
 #   DECISION_ADAPTER_NAME  default "decision"; DECISION_INVOCATION_MARKER, see README
 #   DECISION_SPEECH_INPUT  default 0: speech input is switched off, so no speech model is needed.
 #                           1 keeps the checkpoint's speech input; see README, "Speech input".
@@ -45,9 +45,14 @@ elif [ "${STARTUP_MODE:-}" = "fast" ]; then
 fi
 case "${QUANT:-}" in
     ""|off) ;;
-    kv_fp8) STARTUP_ARGS+=(--kv-cache-dtype fp8) ;;
-    fp8) STARTUP_ARGS+=(--quantization fp8) ;;
-    *) echo "QUANT must be off, fp8 or kv_fp8, not '$QUANT'" >&2; exit 2 ;;
+    *)
+        # Both values were tried on a GB10 against the 8b checkpoint and both fail inside vLLM:
+        # fp8 weights trip "LoRA weight load: 168 parameter(s) absent from the checkpoint would be
+        # served UNINITIALIZED" (the aLoRA adapters are not quantized), and fp8 KV cache trips
+        # "assert input.ndim == 2" in input_quant_fp8.forward_cuda. Refuse rather than fail later.
+        echo "QUANT is not supported for granite-switch checkpoints: vLLM's fp8 weight and KV" \
+             "quantization both fail against the checkpoint's aLoRA adapters. Unset QUANT." >&2
+        exit 2 ;;
 esac
 # A writable CACHE_DIR persists vLLM's compile cache and Triton's kernels across restarts when
 # it is a mounted volume. Unwritable or unmounted, both stay ephemeral, which is today's
@@ -59,8 +64,8 @@ if mkdir -p "$CACHE_DIR" 2>/dev/null && [ -w "$CACHE_DIR" ]; then
 else
     echo "CACHE_DIR '$CACHE_DIR' is not writable; compile and Triton caches stay ephemeral" >&2
 fi
-echo "startup: mode=${STARTUP_MODE:-default} quant=${QUANT:-off}" \
-     "cuda_graph_sizes=${CUDA_GRAPH_SIZES:-vllm-default} cache=${VLLM_CACHE_ROOT:-ephemeral}"
+echo "startup: mode=${STARTUP_MODE:-default} cuda_graph_sizes=${CUDA_GRAPH_SIZES:-vllm-default}" \
+     "cache=${VLLM_CACHE_ROOT:-ephemeral}"
 
 # --dtype bfloat16: composed checkpoints carry torch_dtype null (granite-switch#126).
 # flash_attn_version=2: avoids the FA3 schedule bug (granite-switch#139).
