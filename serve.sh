@@ -5,6 +5,8 @@
 #   MODEL_DIR               default /repository (HF Inference Endpoints' mount point)
 #   TENSOR_PARALLEL_SIZE    default: every visible GPU
 #   MAX_MODEL_LEN (32768), GPU_MEMORY_UTILIZATION (0.90), PORT (8000), SERVED_MODEL_NAME
+#   STARTUP_MODE (default), CUDA_GRAPH_SIZES, CACHE_DIR (/cache): optional startup tuning; see
+#                           README, "Fast startup". All default to today's behaviour.
 #   DECISION_ADAPTER_NAME  default "decision"; DECISION_INVOCATION_MARKER, see README
 #   DECISION_SPEECH_INPUT  default 0: speech input is switched off, so no speech model is needed.
 #                           1 keeps the checkpoint's speech input; see README, "Speech input".
@@ -20,6 +22,51 @@ case "${DECISION_SPEECH_INPUT:-0}" in
 esac
 TP=${TENSOR_PARALLEL_SIZE:-$(python3 -c "import torch; print(max(torch.cuda.device_count(), 1))")}
 export DECISION_ADAPTER_NAME=${DECISION_ADAPTER_NAME:-decision}
+
+# Startup tuning. Every option defaults to today's behaviour; a value that is set but not one
+# of the listed ones stops the server rather than silently serving with unexpected settings.
+STARTUP_ARGS=()
+case "${STARTUP_MODE:-}" in
+    ""|default) ;;
+    fast) STARTUP_ARGS+=(--optimization-level 1) ;;
+    eager) STARTUP_ARGS+=(--enforce-eager) ;;
+    *) echo "STARTUP_MODE must be default, fast or eager, not '$STARTUP_MODE'" >&2; exit 2 ;;
+esac
+if [ -n "${CUDA_GRAPH_SIZES:-}" ]; then
+    if ! [[ "$CUDA_GRAPH_SIZES" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+        echo "CUDA_GRAPH_SIZES must be comma-separated batch sizes, not '$CUDA_GRAPH_SIZES'" >&2
+        exit 2
+    fi
+    STARTUP_ARGS+=(--cudagraph-capture-sizes ${CUDA_GRAPH_SIZES//,/ })
+elif [ "${STARTUP_MODE:-}" = "fast" ]; then
+    # Batches past the largest captured size still run, without a graph. Capture beyond the
+    # set costs boot time that a demo's traffic never uses.
+    STARTUP_ARGS+=(--cudagraph-capture-sizes 1 2 4 8 16 32)
+fi
+case "${QUANT:-}" in
+    ""|off) ;;
+    *)
+        # Both values were tried on a GB10 against the 8b checkpoint and both fail inside vLLM:
+        # fp8 weights trip "LoRA weight load: 168 parameter(s) absent from the checkpoint would be
+        # served UNINITIALIZED" (the aLoRA adapters are not quantized), and fp8 KV cache trips
+        # "assert input.ndim == 2" in input_quant_fp8.forward_cuda. Refuse rather than fail later.
+        echo "QUANT is not supported for granite-switch checkpoints: vLLM's fp8 weight and KV" \
+             "quantization both fail against the checkpoint's aLoRA adapters. Unset QUANT." >&2
+        exit 2 ;;
+esac
+# A writable CACHE_DIR persists vLLM's compile cache and Triton's kernels across restarts when
+# it is a mounted volume. Unwritable or unmounted, both stay ephemeral, which is today's
+# behaviour (the platform Hugging Face Inference Endpoints runs on has no persistent storage).
+CACHE_DIR=${CACHE_DIR:-/cache}
+if mkdir -p "$CACHE_DIR" 2>/dev/null && [ -w "$CACHE_DIR" ]; then
+    mkdir -p "$CACHE_DIR/vllm" "$CACHE_DIR/triton"
+    export VLLM_CACHE_ROOT="$CACHE_DIR/vllm" TRITON_CACHE_DIR="$CACHE_DIR/triton"
+else
+    echo "CACHE_DIR '$CACHE_DIR' is not writable; compile and Triton caches stay ephemeral" >&2
+fi
+echo "startup: mode=${STARTUP_MODE:-default} cuda_graph_sizes=${CUDA_GRAPH_SIZES:-vllm-default}" \
+     "cache=${VLLM_CACHE_ROOT:-ephemeral}"
+
 # --dtype bfloat16: composed checkpoints carry torch_dtype null (granite-switch#126).
 # flash_attn_version=2: avoids the FA3 schedule bug (granite-switch#139).
 # --max-logprobs 256: lets chat clients that read labels by top-K ask for more than 20.
@@ -38,4 +85,5 @@ exec vllm serve "$MODEL_DIR" \
     --enable-prompt-tokens-details \
     --enable-auto-tool-choice --tool-call-parser granite4 \
     "${SPEECH_ARGS[@]}" \
+    "${STARTUP_ARGS[@]}" \
     "$@"

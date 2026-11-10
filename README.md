@@ -90,7 +90,8 @@ says the model weights are stored under `/repository`, which is where this image
 serves on port `8000` and answers `/health`, so those are the values for the endpoint's container port
 and health route. The guide lists public images and private ones on Docker Hub, AWS ECR, Azure ACR
 and Google GCR. GitHub Container Registry is not in that list, but the image is public, so it needs no
-registry credentials.
+registry credentials. The platform has no persistent storage, so `CACHE_DIR` has nothing to survive
+a restart there; the [startup tuning](#fast-startup-optional) options still work.
 
 ### Check that it works
 
@@ -207,6 +208,9 @@ name is passed on to `vllm serve`.
 | `MAX_MODEL_LEN` | `32768` | Longest prompt plus output. |
 | `GPU_MEMORY_UTILIZATION` | `0.90` | Share of GPU memory vLLM may use. |
 | `TENSOR_PARALLEL_SIZE` | every visible GPU | GPUs to split the model across. |
+| `STARTUP_MODE` | `default` | `fast` compiles less and captures CUDA graphs only for small batches; `eager` skips compilation and graphs entirely. See [Fast startup](#fast-startup-optional). |
+| `CUDA_GRAPH_SIZES` | vLLM's own set | Comma-separated batch sizes to capture CUDA graphs for, e.g. `1,2,4,8,16,32`. Overrides `fast` mode's set. |
+| `CACHE_DIR` | `/cache` | If writable, vLLM's compile cache and Triton's kernels are kept under it, so mounting a volume there persists them across restarts. Unwritable or unmounted, both stay ephemeral. |
 | `DECISION_ADAPTER_NAME` | `decision` (the plugin alone uses the checkpoint's only adapter, else `decision`) | Which adapter answers. Checked against the checkpoint at startup; an unknown name stops the server. |
 | `DECISION_INVOCATION_MARKER` | none (`### DECISION` in the image) | The text the adapter was trained to activate on. It is required. Startup checks that a probe prompt activates the adapter exactly once and stops if not, but it cannot tell a working marker from the one the adapter was trained on. |
 | `DECISION_SPEECH_INPUT` | `0` | `1` keeps speech input; see [Speech input](#speech-input-optional). |
@@ -243,6 +247,67 @@ On every decision request the plugin itself sets `temperature=0.0`, `max_complet
 `chat_template_kwargs={"adapter_name": <DECISION_ADAPTER_NAME>}`. Callers cannot change them. vLLM
 caps `logprob_token_ids` at 128 ids, so a `choice` with more options runs as several requests over the
 same prompt, served from the prefix cache.
+
+### Fast startup (optional)
+
+A vLLM boot spends noticeable time in `torch.compile` and CUDA-graph capture before the first token.
+Three environment variables trade that against steady-state performance, for demos or for
+scale-to-zero deployments where every wake pays the boot again:
+
+- `STARTUP_MODE=fast` passes `--optimization-level 1` (less compilation) and captures CUDA graphs
+  only for batch sizes 1-32. Batches larger than the largest captured size still run, without a
+  graph, so the effect of a too-small set is slower decode, never a failure.
+- `STARTUP_MODE=eager` passes `--enforce-eager`: no compilation and no graphs at all, the fastest
+  boot and the slowest serving. For a one-user demo the decode cost is usually irrelevant.
+- `CUDA_GRAPH_SIZES=1,2,4,8` trims the capture set on its own, with `STARTUP_MODE` left at
+  `default`.
+
+All three default off; an unset or empty value means today's behaviour, and a value that is not one
+of the listed ones stops the server at startup with the offending value in the log. The first log
+line after startup begins `startup:` and names the active mode, capture sizes and cache location, so
+a deployment's own configuration is visible in its logs.
+
+Measured on a DGX Spark (GB10, 121.6 GB unified memory) serving the 8b, time from container start to
+`/health` answering 200, each arm a fresh container with `MAX_MODEL_LEN=4096`,
+`--max-num-seqs 4` and `--max-num-batched-tokens 1024`:
+
+| Arm | To ready | Weight load | Compile | Graph capture |
+|---|---|---|---|---|
+| `STARTUP_MODE=eager` | **232 s** | 99 s | none | none |
+| `STARTUP_MODE=fast` | 255 s | 104 s | 16 s | 97 s |
+| `default` | 279 s | 122 s | 16 s | (vLLM's set) |
+
+Two conclusions, both specific to that hardware. Weight loading dominates the boot, so a warm page
+cache matters more than any flag here. And CUDA-graph capture is expensive on GB10 (97 s for six
+sizes), so `eager` is the fastest startup mode there, not `fast`. On H100-class hardware capture is
+far cheaper (published figures put a trimmed set near 7 s against 54 s for the default set), which is
+where `fast` earns its keep. Treat the table as a starting point to measure against, not a rule.
+
+`CACHE_DIR` (default `/cache`) adds the other half: vLLM writes its `torch.compile` artifacts and
+Triton its compiled kernels under it when it is writable, so mounting a volume there
+
+```bash
+docker run -d --name gss --gpus all --ipc=host -p 8000:8000 \
+    -v /srv/models/granite-switch-4.1-8b:/repository:ro \
+    -v gss-cache:/cache \
+    ghcr.io/generative-computing/granite-switch-decision:0.2.0
+```
+
+keeps both across restarts, and a restart skips most of the compile cost. The caches are keyed on
+the vLLM version, the model, the configuration and the GPU, so they recompile silently after an
+upgrade and a volume can be shared only between identical deployments. Hugging Face Inference
+Endpoints has no persistent storage, so there the caches stay ephemeral whatever this is set to;
+the option is for self-hosted containers.
+
+### Quantization doesn't work here
+
+vLLM's fp8 quantization cannot serve these checkpoints. `--quantization fp8` fails at load with
+`LoRA weight load: 168 parameter(s) absent from the checkpoint would be served UNINITIALIZED`, because
+the aLoRA adapters are not quantized and have no corresponding scale parameters, and
+`--kv-cache-dtype fp8` fails in `input_quant_fp8.forward_cuda` on `assert input.ndim == 2` in the
+switch forward path. Both were measured on a GB10 against the 8b. There is no `QUANT` option in this
+image for that reason; passing one stops the server at startup with the reason rather than failing
+later. For a smaller memory footprint, use a smaller checkpoint.
 
 ## Behaviour and limits
 
